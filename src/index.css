@@ -1,0 +1,723 @@
+/* ------------------------------------------------------------------
+   RH-W dashboard
+   Mobile first. This gets read on a phone, one-handed, on a plant floor,
+   possibly in sunlight - hence the large numerals, high contrast, and
+   generous tap targets.
+   ------------------------------------------------------------------ */
+
+:root {
+  --bg: #f4f5f7;
+  --surface: #ffffff;
+  --surface-2: #eceef1;
+  --border: #d8dbe0;
+  --border-strong: #b9bec7;
+  --text: #14171c;
+  --text-dim: #5b636f;
+  --text-faint: #878f9b;
+
+  --live: #0f7b3f;
+  --live-bg: #e4f4ea;
+  --stale: #96590a;
+  --stale-bg: #fdf1dc;
+  --down: #a8231b;
+  --down-bg: #fbe6e4;
+
+  --alarm-hi: #a8231b;
+  --alarm-hi-bg: #fbe6e4;
+  --alarm-lo: #1d4ed8;
+  --alarm-lo-bg: #e5ecfd;
+
+  --accent: #1f6feb;
+  --grid: #e3e6ea;
+
+  /* Categorical series slots, validated against the #ffffff panel surface:
+     lightness band, chroma floor, adjacent-pair CVD separation and the
+     normal-vision floor all pass. Aqua, yellow and magenta fall below 3:1
+     contrast here, which is why every line also carries a direct label. */
+  --series-1: #2a78d6;
+  --series-2: #eb6834;
+  --series-3: #1baf7a;
+  --series-4: #eda100;
+  --series-5: #e87ba4;
+  --series-6: #008300;
+  --series-7: #4a3aa7;
+  --series-8: #e34948;
+  --series-other: #6b7280;
+
+  --radius: 12px;
+  --shadow: 0 1px 2px rgba(16, 20, 28, .06), 0 4px 12px rgba(16, 20, 28, .05);
+
+  color-scheme: light dark;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #0e1116;
+    --surface: #171b22;
+    --surface-2: #1f242d;
+    --border: #2b323d;
+    --border-strong: #3d4552;
+    --text: #e9edf3;
+    --text-dim: #9aa4b2;
+    --text-faint: #6e7885;
+
+    --live: #4ade80;
+    --live-bg: #10291b;
+    --stale: #fbbf24;
+    --stale-bg: #2e2410;
+    --down: #f87171;
+    --down-bg: #2e1414;
+
+    --alarm-hi: #f87171;
+    --alarm-hi-bg: #2e1414;
+    --alarm-lo: #93b4fd;
+    --alarm-lo-bg: #141d2e;
+
+    --accent: #58a6ff;
+    --grid: #262c36;
+
+    /* The same eight hues re-stepped for the #171b22 surface - a selected dark
+       set, not a flip of the light one. All eight clear 3:1 here. */
+    --series-1: #3987e5;
+    --series-2: #d95926;
+    --series-3: #199e70;
+    --series-4: #c98500;
+    --series-5: #d55181;
+    --series-6: #008300;
+    --series-7: #9085e9;
+    --series-8: #e66767;
+    --series-other: #8b94a3;
+    --shadow: 0 1px 2px rgba(0, 0, 0, .4);
+  }
+}
+
+* { box-sizing: border-box; }
+
+html, body, #root { height: 100%; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
+               "Helvetica Neue", Arial, sans-serif;
+  font-size: 15px;
+  line-height: 1.45;
+  -webkit-font-smoothing: antialiased;
+  -webkit-text-size-adjust: 100%;
+}
+
+.app {
+  max-width: 1100px;
+  margin: 0 auto;
+  padding: 12px 12px 56px;
+}
+
+/* ---------- header ---------- */
+
+.masthead {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin: 0 -12px 14px;
+  padding: 10px 14px 11px;
+  background: color-mix(in srgb, var(--bg) 86%, transparent);
+  backdrop-filter: saturate(180%) blur(10px);
+  border-bottom: 1px solid var(--border);
+}
+
+.masthead h1 {
+  margin: 0;
+  font-size: 1.15rem;
+  font-weight: 650;
+  letter-spacing: -.01em;
+}
+
+.masthead .device {
+  font-size: .8rem;
+  color: var(--text-faint);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---------- status banner ---------- */
+
+.banner {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 12px 14px;
+  border-radius: var(--radius);
+  border: 1px solid transparent;
+  margin-bottom: 16px;
+}
+
+.banner-live {
+  background: var(--live-bg);
+  border-color: color-mix(in srgb, var(--live) 30%, transparent);
+}
+
+.banner-stale {
+  background: var(--stale-bg);
+  border-color: color-mix(in srgb, var(--stale) 45%, transparent);
+}
+
+.banner-disconnected,
+.banner-no-data {
+  background: var(--down-bg);
+  border-color: color-mix(in srgb, var(--down) 45%, transparent);
+}
+
+.banner-connecting {
+  background: var(--surface-2);
+  border-color: var(--border);
+}
+
+/* Disconnection is the one state that must never be skimmed past. */
+.banner-disconnected { border-width: 2px; }
+
+.banner-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  margin-top: 6px;
+  flex: none;
+}
+
+.banner-live .banner-dot {
+  background: var(--live);
+  animation: pulse 2.4s ease-in-out infinite;
+}
+
+.banner-stale .banner-dot { background: var(--stale); }
+
+.banner-disconnected .banner-dot,
+.banner-no-data .banner-dot { background: var(--down); }
+
+.banner-connecting .banner-dot { background: var(--text-faint); }
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: .35; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .banner-live .banner-dot { animation: none; }
+}
+
+.banner-text { min-width: 0; }
+
+.banner-title {
+  font-weight: 650;
+  font-size: .93rem;
+  letter-spacing: .01em;
+}
+
+.banner-live .banner-title { color: var(--live); }
+.banner-stale .banner-title { color: var(--stale); }
+
+.banner-disconnected .banner-title,
+.banner-no-data .banner-title { color: var(--down); }
+
+.banner-connecting .banner-title { color: var(--text-dim); }
+
+.banner-detail {
+  font-size: .84rem;
+  color: var(--text-dim);
+  margin-top: 2px;
+}
+
+/* ---------- tag cards ---------- */
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(172px, 248px));
+  justify-content: start;
+  gap: 12px;
+}
+
+.card {
+  position: relative;
+  text-align: left;
+  font: inherit;
+  color: inherit;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  padding: 12px 14px 11px;
+  cursor: pointer;
+  transition: border-color .12s, transform .12s, box-shadow .12s;
+  min-height: 122px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.card:hover {
+  border-color: var(--border-strong);
+  box-shadow: var(--shadow), 0 6px 16px rgba(16, 20, 28, .07);
+}
+.card:active { transform: scale(.985); }
+
+.card:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* Shown on the chart. The colour bar is added by .card-stripe; this is the
+   shape-and-weight half of the same signal. */
+.card-shown {
+  border-color: var(--accent);
+  box-shadow: var(--shadow), 0 0 0 1px var(--accent);
+}
+
+.card:disabled {
+  cursor: not-allowed;
+  opacity: .55;
+}
+
+.card:disabled:hover { border-color: var(--border); box-shadow: var(--shadow); }
+
+.card-stripe {
+  position: absolute;
+  left: 0;
+  top: 10px;
+  bottom: 10px;
+  width: 3px;
+  border-radius: 0 3px 3px 0;
+  background: transparent;
+}
+
+.card-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 6px;
+}
+
+.card-name {
+  font-size: .8rem;
+  color: var(--text-dim);
+  font-weight: 550;
+  overflow-wrap: anywhere;
+}
+
+.card-value {
+  display: flex;
+  align-items: baseline;
+  gap: 5px;
+  margin-top: 4px;
+}
+
+.card-number {
+  font-size: 2rem;
+  font-weight: 640;
+  letter-spacing: -.02em;
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+
+.card-unit {
+  font-size: .85rem;
+  color: var(--text-faint);
+  font-weight: 500;
+}
+
+.card-age {
+  margin-top: auto;
+  padding-top: 6px;
+  font-size: .74rem;
+  color: var(--text-faint);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Stale: drained of colour and explicitly labelled. A greyed number with
+   "4 minutes ago" under it cannot be misread as a live reading. */
+.card-stale { background: var(--surface-2); }
+
+.card-stale .card-number,
+.card-stale .card-unit { color: var(--text-faint); }
+
+.card-stale .card-age {
+  color: var(--stale);
+  font-weight: 600;
+}
+
+/* Limit breaches, shown only while the reading is actually current - an
+   alarm colour on a frozen number would be a lie twice over. */
+.card-alarm-high {
+  border-color: var(--alarm-hi);
+  background: var(--alarm-hi-bg);
+}
+
+.card-alarm-high .card-number { color: var(--alarm-hi); }
+
+.card-alarm-low {
+  border-color: var(--alarm-lo);
+  background: var(--alarm-lo-bg);
+}
+
+.card-alarm-low .card-number { color: var(--alarm-lo); }
+
+.card-flag {
+  font-size: .68rem;
+  font-weight: 700;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+  margin-top: 3px;
+}
+
+.card-alarm-high .card-flag { color: var(--alarm-hi); }
+.card-alarm-low .card-flag { color: var(--alarm-lo); }
+
+.card-limits {
+  font-size: .7rem;
+  color: var(--text-faint);
+  font-variant-numeric: tabular-nums;
+  margin-top: 3px;
+}
+
+/* Boolean tags read as a state, never as 1.0 / 0.0. */
+.state-pill {
+  display: inline-block;
+  padding: 3px 10px;
+  border-radius: 999px;
+  font-size: 1.05rem;
+  font-weight: 680;
+  letter-spacing: .04em;
+}
+
+.state-on { background: var(--live-bg); color: var(--live); }
+.state-off { background: var(--surface-2); color: var(--text-dim); }
+
+.card-stale .state-on,
+.card-stale .state-off {
+  background: var(--surface-2);
+  color: var(--text-faint);
+}
+
+/* ---------- chart panel ---------- */
+
+.panel {
+  margin-top: 20px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  padding: 14px 12px 8px;
+}
+
+.panel-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 0 2px 12px;
+}
+
+.panel-title { font-weight: 640; font-size: .98rem; }
+
+.panel-sub {
+  font-size: .78rem;
+  color: var(--text-faint);
+  margin-top: 1px;
+}
+
+.ranges {
+  display: flex;
+  gap: 4px;
+  background: var(--surface-2);
+  padding: 3px;
+  border-radius: 9px;
+}
+
+.range-btn {
+  font: inherit;
+  font-size: .82rem;
+  font-weight: 570;
+  color: var(--text-dim);
+  background: transparent;
+  border: 0;
+  border-radius: 7px;
+  padding: 6px 13px;
+  cursor: pointer;
+  min-width: 44px;
+}
+
+.range-btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.range-active {
+  background: var(--surface);
+  color: var(--text);
+  box-shadow: 0 1px 2px rgba(16, 20, 28, .12);
+}
+
+.chart-wrap { width: 100%; height: 300px; }
+
+@media (max-width: 560px) {
+  .chart-wrap { height: 240px; }
+  .card-number { font-size: 1.6rem; }
+}
+
+.chart-note {
+  font-size: .72rem;
+  color: var(--text-faint);
+  padding: 4px 4px 6px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---------- misc ---------- */
+
+.placeholder {
+  display: grid;
+  place-items: center;
+  height: 100%;
+  min-height: 200px;
+  color: var(--text-faint);
+  font-size: .88rem;
+  text-align: center;
+  padding: 20px;
+}
+
+.notice {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--down);
+  border-radius: var(--radius);
+  padding: 16px 18px;
+  margin: 12px 0;
+}
+
+.notice h2 { margin: 0 0 8px; font-size: 1rem; }
+
+.notice p {
+  margin: 0 0 8px;
+  color: var(--text-dim);
+  font-size: .88rem;
+}
+
+.notice code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: .82rem;
+  background: var(--surface-2);
+  padding: 1px 5px;
+  border-radius: 4px;
+}
+
+.notice ul { margin: 6px 0 0; padding-left: 20px; }
+.notice li { font-size: .84rem; color: var(--text-dim); }
+
+.footnote {
+  margin-top: 22px;
+  padding: 0 4px;
+  font-size: .74rem;
+  color: var(--text-faint);
+}
+
+.tooltip {
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  padding: 8px 10px;
+  box-shadow: var(--shadow);
+  font-size: .8rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.tooltip-time {
+  color: var(--text-faint);
+  margin-bottom: 4px;
+  font-size: .75rem;
+}
+
+.tooltip-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.tooltip-label { color: var(--text-dim); }
+.tooltip-value { font-weight: 620; }
+
+/* ---------- window summary ---------- */
+
+.stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(74px, 1fr));
+  gap: 1px;
+  margin: 0 0 12px;
+  padding: 0;
+  background: var(--border);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  overflow: hidden;
+}
+
+.stat {
+  background: var(--surface);
+  padding: 8px 11px 9px;
+  min-width: 0;
+}
+
+.stat dt {
+  font-size: .66rem;
+  font-weight: 650;
+  letter-spacing: .07em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+}
+
+.stat dd {
+  margin: 1px 0 0;
+  font-size: 1.05rem;
+  font-weight: 630;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -.01em;
+  overflow-wrap: anywhere;
+}
+
+/* The present-tense figure is the one an operator is usually after, so it is
+   the only one carrying the accent. */
+.stat-live dd { color: var(--accent); }
+
+.stat-unit {
+  margin-left: 3px;
+  font-size: .72rem;
+  font-weight: 500;
+  color: var(--text-faint);
+}
+
+/* ---------- panel head refinements ---------- */
+
+.panel-title {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 2px;
+}
+
+.range-active {
+  box-shadow: 0 1px 2px rgba(16, 20, 28, .12), 0 0 0 1px var(--border);
+}
+
+.range-btn { transition: color .12s, background .12s; }
+.range-btn:hover:not(.range-active) { color: var(--text); }
+
+@media (prefers-color-scheme: dark) {
+  .card:hover { box-shadow: var(--shadow), 0 6px 16px rgba(0, 0, 0, .5); }
+  .range-active { box-shadow: 0 1px 2px rgba(0, 0, 0, .4), 0 0 0 1px var(--border-strong); }
+}
+
+@media (max-width: 560px) {
+  .stat dd { font-size: .98rem; }
+  .stat { padding: 7px 9px 8px; }
+}
+
+/* ---------- legend / series visibility ---------- */
+
+.legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 10px 2px 4px;
+  border-top: 1px solid var(--border);
+  margin-top: 6px;
+}
+
+.legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font: inherit;
+  font-size: .8rem;
+  color: var(--text-dim);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  padding: 5px 11px 5px 8px;
+  cursor: pointer;
+  min-height: 34px;
+  transition: background .12s, border-color .12s, color .12s;
+}
+
+.legend-item:hover:not(:disabled) {
+  background: var(--surface-2);
+  border-color: var(--border);
+}
+
+.legend-item:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.legend-item:disabled { cursor: not-allowed; opacity: .5; }
+
+/* Shown: full-weight text. Hidden stays legible rather than ghosted - it is
+   still the control you use to bring the trend back. */
+.legend-on {
+  color: var(--text);
+  background: var(--surface-2);
+  border-color: var(--border);
+}
+
+.legend-name { font-weight: 560; }
+
+.legend-value {
+  font-variant-numeric: tabular-nums;
+  color: var(--text-faint);
+  font-weight: 600;
+}
+
+.legend-unit { margin-left: 2px; font-weight: 500; }
+
+/* The mark that carries identity. Text beside it keeps text tokens - a name
+   painted in its series colour is the classic unreadable legend. */
+.swatch {
+  width: 11px;
+  height: 11px;
+  border-radius: 3px;
+  flex: none;
+  border: 1px solid var(--border-strong);
+  background: transparent;
+}
+
+.legend-on .swatch { border-color: transparent; }
+
+.tooltip-label .swatch {
+  width: 9px;
+  height: 9px;
+  margin-right: 6px;
+  display: inline-block;
+  vertical-align: baseline;
+  border-color: transparent;
+}
+
+/* ---------- panel controls ---------- */
+
+.panel-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.tooltip-spread {
+  margin-top: 5px;
+  padding-top: 5px;
+  border-top: 1px solid var(--border);
+  font-size: .73rem;
+  color: var(--text-faint);
+}
+
+.tooltip-row + .tooltip-row { margin-top: 2px; }
+
+.tooltip-label { display: inline-flex; align-items: center; }

@@ -1,0 +1,41 @@
+// Realtime Database security rules.
+//
+// Data flows one way: the logger's service account writes, clients read.
+// The Admin SDK bypasses these rules entirely, so denying every client write
+// here costs the pusher nothing and removes the whole class of "someone with
+// the web config forged a reading" problems.
+//
+// Read requires a signed-in user. Today that is anonymous auth, which is a
+// speed bump rather than a wall - anyone can mint an anonymous user. It keeps
+// the database off the open internet and gives each session an identity to
+// build on. Tighten the read conditions when real accounts land; the shape
+// below is already per-subtree so that change stays local.
+//
+// history/ is queried with orderByKey(), which needs no .indexOn - keys are
+// always indexed.
+{
+  "rules": {
+    ".read": false,
+    ".write": false,
+
+    "latest": {
+      ".read": "auth != null",
+      ".write": false
+    },
+
+    "history": {
+      ".read": "auth != null",
+      ".write": false
+    },
+
+    "status": {
+      ".read": "auth != null",
+      ".write": false
+    },
+
+    "tags": {
+      ".read": "auth != null",
+      ".write": false
+    }
+  }
+}
