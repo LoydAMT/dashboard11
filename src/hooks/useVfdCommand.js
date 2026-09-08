@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { ref, runTransaction } from 'firebase/database'
+import { ref, update } from 'firebase/database'
 import { db } from '../firebase'
 import { useRtdbValue } from './useRtdbValue'
 import { useServerTimeOffset } from './useServerTime'
@@ -34,8 +34,8 @@ export function useVfdCommand(deviceId, enabled) {
   const path = `commands/${deviceId}`
 
   // Subscribed continuously, not only while waiting. It supplies the resting
-  // state, and it also keeps the node in the SDK's cache so the transaction
-  // below starts from the real seq rather than from null.
+  // state, and its live seq is what send() below increments from - no read
+  // happens at send time, only whatever this listener has already delivered.
   const node = useRtdbValue(path, enabled)
   const { offsetRef } = useServerTimeOffset()
 
@@ -50,6 +50,13 @@ export function useVfdCommand(deviceId, enabled) {
     busyRef.current = busy
   }, [busy])
 
+  // send() reads this rather than closing over node.data directly, so the
+  // callback's identity does not have to change on every snapshot.
+  const nodeDataRef = useRef(node.data)
+  useEffect(() => {
+    nodeDataRef.current = node.data
+  }, [node.data])
+
   const send = useCallback(
     async (value) => {
       if (!db || !isCommandValue(value) || busyRef.current) return
@@ -58,41 +65,28 @@ export function useVfdCommand(deviceId, enabled) {
 
       try {
         const issuedAt = Date.now() + offsetRef.current
+        const prevSeq = nodeDataRef.current?.seq
+        const nextSeq = typeof prevSeq === 'number' && Number.isFinite(prevSeq) ? prevSeq + 1 : 1
 
-        // A transaction, not a set: seq must increment even if two operators
-        // press at the same moment, and a lost increment would let the box see
-        // an unchanged seq and skip a command it was meant to run.
-        const result = await runTransaction(ref(db, path), (current) => {
-          const prev = current && typeof current === 'object' ? current : {}
-          const prevSeq = typeof prev.seq === 'number' && Number.isFinite(prev.seq) ? prev.seq : 0
-          // Spread first so ack/ survives. This node is written whole, and
-          // dropping the box's last ack would erase the only record of what the
-          // drive was last confirmed to have been told.
-          return { ...prev, seq: prevSeq + 1, value, issuedAt }
-        })
+        // A partial update, not a whole-node write: this touches only seq,
+        // value and issuedAt, so ack/ - written solely by the box's Admin SDK -
+        // is never part of the request. There is nothing here to read back or
+        // keep unchanged, which was the earlier bug: a whole-node transaction
+        // had to reconstruct ack from whatever the local cache happened to
+        // hold, and if that cache had not yet synced (fresh page load, quick
+        // repeat presses), the write silently omitted ack and the database's
+        // own rule - correctly refusing to let a client erase it - rejected the
+        // whole command with permission_denied. update() cannot lose a field it
+        // never touches.
+        //
+        // If a second operator's press landed first, nextSeq will not match
+        // what the server actually holds by the time this reaches it, and the
+        // database's seq rule (must be exactly one more than the current
+        // value) rejects it - caught below as send-failed, same as any other
+        // write refusal. Pressing again reads the real seq and succeeds.
+        await update(ref(db, path), { seq: nextSeq, value, issuedAt })
 
-        if (!result.committed) {
-          setFlight({
-            phase: 'send-failed',
-            value,
-            detail: 'The write was aborted before it reached the database.',
-          })
-          return
-        }
-
-        const seq = result.snapshot.val()?.seq
-        if (typeof seq !== 'number') {
-          setFlight({
-            phase: 'send-failed',
-            value,
-            detail: 'The database accepted the write but returned no sequence number.',
-          })
-          return
-        }
-
-        // The seq is read back from the commit rather than guessed, so what we
-        // match the ack against is the number the box will actually see.
-        setFlight({ phase: 'pending', value, seq, sentAt: Date.now() })
+        setFlight({ phase: 'pending', value, seq: nextSeq, sentAt: Date.now() })
       } catch (err) {
         setFlight({ phase: 'send-failed', value, detail: err?.message || String(err) })
       }

@@ -78,12 +78,18 @@
         },
 
         // ack/ is written by the box's Admin SDK, which bypasses every rule
-        // here - this validate exists purely to stop a *client* write from
-        // forging or clearing it. The app's own writes are transactions that
-        // read ack back unchanged, so this never rejects a legitimate command
-        // - only an attempt to alter what the box already reported.
+        // here. The app writes commands with update(), touching only seq,
+        // value and issuedAt, so a legitimate client request never includes
+        // ack at all - an unconditional false is exactly the right rule, not
+        // a stricter "must match" check. (An earlier version of this rule
+        // required the client to echo ack back unchanged, on the assumption
+        // that a whole-node write needed to preserve it - that broke the very
+        // first command after a page load, when the client's cache had not
+        // yet received the box's latest ack to echo. Switching the client to
+        // update() removed the need for this rule to be anything other than
+        // a flat no.)
         "ack": {
-          ".validate": "newData.val() === data.val()"
+          ".validate": false
         },
 
         "$other": { ".validate": false }
