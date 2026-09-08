@@ -13,6 +13,16 @@
 //
 // history/ is queried with orderByKey(), which needs no .indexOn - keys are
 // always indexed.
+//
+// commands/ is the one write-capable subtree, and it is the odd one out: it
+// drives a physical VFD through the RH-W. TESTING PHASE - the write condition
+// below is "auth != null", same speed bump as every read, so any anonymous
+// session can command the drive. That is a deliberate, temporary choice for
+// bench testing, matching src/auth.js#canControl. When real sign-in lands,
+// both this condition and canControl must be tightened together - see the
+// comment on canControl for what that change looks like. Until then, do not
+// point this database at anything the anonymous-auth speed bump cannot be
+// allowed to touch.
 {
   "rules": {
     ".read": false,
@@ -36,6 +46,48 @@
     "tags": {
       ".read": "auth != null",
       ".write": false
+    },
+
+    "commands": {
+      "$device": {
+        ".read": "auth != null",
+        ".write": "auth != null",
+
+        // Closed shape: only these four keys, so a client cannot smuggle an
+        // extra field the box's poller might one day be extended to trust.
+        ".validate": "newData.hasChildren(['seq', 'value', 'issuedAt'])",
+
+        "seq": {
+          // Must increment by exactly one. The box treats an unchanged seq as
+          // "nothing new" and a jump as grounds to distrust the sender, so a
+          // client is only ever allowed to advance it by one step.
+          ".validate": "newData.isNumber() && (data.exists() ? newData.val() === data.val() + 1 : newData.val() === 1)"
+        },
+
+        "value": {
+          ".validate": "newData.val() === 1 || newData.val() === 6"
+        },
+
+        "issuedAt": {
+          // Loosely bounded around the server clock. This is not the box's
+          // 30-second staleness check - that is enforced on the box, against
+          // whatever issuedAt the client sent, and this app must never
+          // second-guess it. This band only catches a wildly wrong client
+          // clock (or a forged timestamp) before it ever reaches the box.
+          ".validate": "newData.isNumber() && newData.val() <= now + 15000 && newData.val() >= now - 180000"
+        },
+
+        // ack/ is written by the box's Admin SDK, which bypasses every rule
+        // here - this validate exists purely to stop a *client* write from
+        // forging or clearing it. The app's own writes are transactions that
+        // read ack back unchanged, so this never rejects a legitimate command
+        // - only an attempt to alter what the box already reported.
+        "ack": {
+          ".validate": "newData.val() === data.val()"
+        },
+
+        "$other": { ".validate": false }
+      }
     }
   }
 }

@@ -891,3 +891,204 @@ body {
   .card-age { font-size: .7rem; padding-top: 5px; }
   .card-value { margin-top: 3px; }
 }
+
+
+/* ---------- VFD control ---------- */
+
+/* This panel writes to physical equipment. Every rule below is aimed at making
+   the four states - idle, sending, pending, settled - visibly different, since
+   an operator glancing at a phone must never mistake "sent" for "done". */
+
+.vfd { margin-top: 20px; }
+
+.vfd-warning {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  background: var(--stale-bg);
+  color: var(--stale);
+  border: 1px solid var(--stale);
+  border-radius: 10px;
+  padding: 9px 12px;
+  font-size: .8rem;
+  line-height: 1.4;
+  margin: 0 2px 12px;
+}
+
+.vfd-warning strong { font-weight: 650; }
+
+.vfd-locked {
+  font-size: .84rem;
+  color: var(--text-dim);
+  background: var(--surface-2);
+  border-radius: 10px;
+  padding: 10px 12px;
+  margin: 0 2px 12px;
+}
+
+.vfd-buttons {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  padding: 0 2px;
+}
+
+/* 52px min-height keeps both buttons well past the 44px tap-target floor -
+   this is pressed on a phone, standing, possibly gloved. */
+.vfd-btn {
+  font: inherit;
+  font-weight: 640;
+  font-size: .92rem;
+  border-radius: 10px;
+  padding: 13px 16px;
+  min-height: 52px;
+  cursor: pointer;
+  border: 1px solid var(--border-strong);
+  background: var(--surface);
+  color: var(--text);
+}
+
+.vfd-btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.vfd-btn:disabled {
+  cursor: not-allowed;
+  opacity: .5;
+}
+
+.vfd-start {
+  background: var(--live-bg);
+  color: var(--live);
+  border-color: var(--live);
+}
+
+.vfd-stop {
+  background: var(--down-bg);
+  color: var(--down);
+  border-color: var(--down);
+}
+
+.vfd-cancel {
+  background: var(--surface);
+  color: var(--text-dim);
+}
+
+.vfd-status:empty { display: none; }
+
+.vfd-line {
+  margin: 12px 2px 0;
+  padding: 11px 13px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+}
+
+.vfd-line-title {
+  font-weight: 620;
+  font-size: .88rem;
+}
+
+.vfd-line-detail {
+  margin-top: 3px;
+  font-size: .8rem;
+  color: var(--text-dim);
+  line-height: 1.45;
+}
+
+.vfd-pending {
+  border-color: var(--accent);
+  background: var(--alarm-lo-bg);
+}
+
+.vfd-pending .vfd-line-title { color: var(--accent); }
+
+.vfd-ok {
+  border-color: var(--live);
+  background: var(--live-bg);
+}
+
+.vfd-ok .vfd-line-title { color: var(--live); }
+
+.vfd-bad {
+  border-color: var(--down);
+  background: var(--down-bg);
+}
+
+.vfd-bad .vfd-line-title { color: var(--down); }
+
+.vfd-warn {
+  border-color: var(--stale);
+  background: var(--stale-bg);
+}
+
+.vfd-warn .vfd-line-title { color: var(--stale); }
+
+.vfd-dismiss {
+  font: inherit;
+  font-size: .78rem;
+  font-weight: 600;
+  margin-top: 9px;
+  background: transparent;
+  border: 0;
+  padding: 0;
+  color: inherit;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.vfd-known {
+  margin: 12px 2px 4px;
+  font-size: .78rem;
+  color: var(--text-faint);
+  line-height: 1.5;
+}
+
+.vfd-dialog {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  padding: 0;
+  max-width: 420px;
+  width: calc(100vw - 40px);
+  color: var(--text);
+  background: var(--surface);
+}
+
+.vfd-dialog::backdrop {
+  background: rgba(8, 10, 14, .55);
+}
+
+.vfd-dialog-body { padding: 20px; }
+
+.vfd-dialog-body h2 {
+  margin: 0 0 10px;
+  font-size: 1.05rem;
+}
+
+.vfd-dialog-body p {
+  margin: 0 0 12px;
+  font-size: .88rem;
+  color: var(--text-dim);
+  line-height: 1.5;
+}
+
+.vfd-dialog-note {
+  background: var(--surface-2);
+  border-radius: 8px;
+  padding: 9px 11px;
+  font-size: .8rem !important;
+}
+
+.vfd-dialog-actions {
+  display: flex;
+  gap: 10px;
+  margin-top: 6px;
+}
+
+.vfd-dialog-actions .vfd-btn { flex: 1; }
+
+@media (max-width: 560px) {
+  .vfd-buttons { grid-template-columns: 1fr; }
+}

@@ -18,6 +18,7 @@ import { RangePicker } from './components/RangePicker'
 import { ChartLegend } from './components/ChartLegend'
 import { ConfigNotice, ErrorNotice } from './components/ConfigNotice'
 import { DataTable } from './components/DataTable'
+import { VfdControl } from './components/VfdControl'
 
 // Recharts is by far the heaviest thing in the bundle and none of it is needed
 // to answer the question the page exists to answer: what is the value right
@@ -41,7 +42,7 @@ export default function App() {
 }
 
 function Dashboard() {
-  const { ready, error: authError } = useAuth()
+  const { ready, error: authError, mayControl, resolved: authResolved } = useAuth()
 
   // `.info/connected` is local to the SDK, so it is watched regardless of auth.
   const connected = useConnection()
@@ -176,6 +177,8 @@ function Dashboard() {
       <Masthead deviceId={DEVICE_ID} periodMs={periodMs} />
 
       <StatusBanner state={state} status={status.data} />
+
+      <VfdControl deviceId={DEVICE_ID} mayControl={mayControl} authResolved={authResolved} />
 
       {authError && <ErrorNotice title="Sign-in failed" error={authError} />}
       {dataError && <ErrorNotice title="Could not read the database" error={dataError} />}

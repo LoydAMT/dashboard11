@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { ensureSignedIn, watchAuth } from '../auth'
+import { canControl, ensureSignedIn, watchAuth } from '../auth'
 
 /**
  * Hold a signed-in user, so data subscriptions know when they may start.
@@ -23,5 +23,14 @@ export function useAuth() {
     return unsubscribe
   }, [])
 
-  return { user, error, ready: Boolean(user), resolved }
+  return {
+    user,
+    error,
+    ready: Boolean(user),
+    resolved,
+    // Kept beside `ready` so the difference is impossible to miss at the call
+    // site: `ready` means data may be read, `mayControl` means equipment may
+    // be moved. They are the same test today and must not stay that way.
+    mayControl: canControl(user),
+  }
 }
