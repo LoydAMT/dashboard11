@@ -4,6 +4,7 @@ import {
 } from 'recharts'
 import { formatAxisTime, formatLocal } from '../lib/time'
 import { formatValue, displayUnit } from '../lib/tags'
+import { computeDomain, axisTickFormatter, axisTicks } from '../lib/domain'
 
 /**
  * One-minute rollups for one or several tags over the selected window.
@@ -68,12 +69,14 @@ export function HistoryChart({ tags, colors, data, rangeMs, indexed, loading, er
   })
 
   const domain = computeDomain(data, tags, { isBool, indexed })
+  const formatTick = axisTickFormatter(domain)
+  const valueTicks = axisTicks(domain)
 
   return (
     <div className="chart-wrap">
       <ResponsiveContainer width="100%" height="100%">
         {/* Right margin leaves room for the direct labels. */}
-        <ComposedChart data={data} margin={{ top: 8, right: 68, bottom: 4, left: -6 }}>
+        <ComposedChart data={data} margin={{ top: 8, right: 68, bottom: 4, left: 0 }}>
           <CartesianGrid stroke="var(--grid)" vertical={false} />
 
           <XAxis
@@ -91,12 +94,12 @@ export function HistoryChart({ tags, colors, data, rangeMs, indexed, loading, er
             domain={domain}
             tick={{ fontSize: 11, fill: 'var(--text-faint)' }}
             stroke="var(--border)"
-            width={54}
-            ticks={isBool && !indexed ? [0, 1] : undefined}
+            width={58}
+            ticks={isBool && !indexed ? [0, 1] : indexed ? undefined : valueTicks}
             tickFormatter={
               indexed ? (v) => `${Math.round(v)}%`
                 : isBool ? (v) => (v ? 'ON' : 'OFF')
-                  : undefined
+                  : formatTick
             }
             allowDecimals={!isBool || indexed}
           />
@@ -197,42 +200,6 @@ function EndLabel({ show, x, y, text, fill }) {
 }
 
 const shortName = (name) => (name.length > 11 ? `${name.slice(0, 10)}…` : name)
-
-/** Pad the value axis, and keep configured limits in frame so a breach is visible. */
-function computeDomain(rows, tags, { isBool, indexed }) {
-  if (indexed) return [0, 100]
-  if (isBool) return [0, 1]
-
-  let lo = Infinity
-  let hi = -Infinity
-
-  for (const row of rows) {
-    // The band widens the frame for a lone series; for an overlay the lines
-    // themselves are the extent.
-    if (Array.isArray(row.band)) {
-      if (row.band[0] < lo) lo = row.band[0]
-      if (row.band[1] > hi) hi = row.band[1]
-    }
-    for (const tag of tags) {
-      const v = row[tag.key]
-      if (typeof v !== 'number') continue
-      if (v < lo) lo = v
-      if (v > hi) hi = v
-    }
-  }
-
-  if (lo === Infinity) return ['auto', 'auto']
-
-  if (tags.length === 1) {
-    if (tags[0].loLimit != null) lo = Math.min(lo, tags[0].loLimit)
-    if (tags[0].hiLimit != null) hi = Math.max(hi, tags[0].hiLimit)
-  }
-
-  // A dead-flat series would otherwise collapse to a zero-height axis.
-  const span = hi - lo || Math.max(Math.abs(hi) * 0.1, 1)
-  const pad = span * 0.08
-  return [lo - pad, hi + pad]
-}
 
 function ChartTooltip({ active, payload, label, tags, colors, indexed }) {
   if (!active || !payload?.length) return null
