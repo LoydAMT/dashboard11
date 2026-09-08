@@ -11,11 +11,13 @@ import { discoverTagKeys, buildTag, formatValue, displayUnit } from './lib/tags'
 import { colorForIndex, MAX_SERIES } from './lib/palette'
 import { mergeSeries } from './lib/series'
 import { rangeById, DEFAULT_RANGE } from './lib/ranges'
+import { buildTable } from './lib/table'
 import { StatusBanner } from './components/StatusBanner'
 import { TagCard } from './components/TagCard'
 import { RangePicker } from './components/RangePicker'
 import { ChartLegend } from './components/ChartLegend'
 import { ConfigNotice, ErrorNotice } from './components/ConfigNotice'
+import { DataTable } from './components/DataTable'
 
 // Recharts is by far the heaviest thing in the bundle and none of it is needed
 // to answer the question the page exists to answer: what is the value right
@@ -88,6 +90,7 @@ function Dashboard() {
 
   const [pickedKeys, setPickedKeys] = useState([])
   const [indexed, setIndexed] = useState(false)
+  const [view, setView] = useState('chart')
   const [rangeId, setRangeId] = useState(DEFAULT_RANGE.id)
   const range = rangeById(rangeId)
 
@@ -150,6 +153,22 @@ function Dashboard() {
 
   const singleStats = single ? merged.stats[single.key] : null
 
+  // Built from the raw rollups rather than the chart's downsampled rows, and
+  // only while the table is the thing on screen: aligning ten thousand minutes
+  // across four tags is not work to do on every tick of a chart nobody is
+  // looking away from.
+  const table = useMemo(
+    () => (view === 'table'
+      ? buildTable({
+          byKey: history.byKey,
+          tags: visibleTags,
+          range,
+          nowMs: coarseNow,
+        })
+      : EMPTY_TABLE),
+    [view, history.byKey, visibleTags, range, coarseNow],
+  )
+
   const dataError = latest.error || tags.error || status.error
 
   return (
@@ -208,15 +227,36 @@ function Dashboard() {
                 {single ? single.name : `${visibleTags.length} trends`}
               </div>
               <div className="panel-sub">
-                {single
-                  ? (single.description ||
-                     (single.unit ? `Unit: ${single.unit}` : 'One-minute rollups'))
-                  : 'One-minute rollups · tap a card or a legend entry to add or remove a trend'}
+                {view === 'table'
+                  ? 'Every one-minute rollup in the window, newest first'
+                  : single
+                    ? (single.description ||
+                       (single.unit ? `Unit: ${single.unit}` : 'One-minute rollups'))
+                    : 'One-minute rollups · tap a card or a legend entry to add or remove a trend'}
               </div>
             </div>
 
             <div className="panel-controls">
-              {visibleTags.length > 1 && (
+              <div className="ranges" role="group" aria-label="View">
+                <button
+                  type="button"
+                  className={`range-btn ${view === 'chart' ? 'range-active' : ''}`}
+                  aria-pressed={view === 'chart'}
+                  onClick={() => setView('chart')}
+                >
+                  Chart
+                </button>
+                <button
+                  type="button"
+                  className={`range-btn ${view === 'table' ? 'range-active' : ''}`}
+                  aria-pressed={view === 'table'}
+                  onClick={() => setView('table')}
+                >
+                  Table
+                </button>
+              </div>
+
+              {view === 'chart' && visibleTags.length > 1 && (
                 <div className="ranges" role="group" aria-label="Value axis">
                   {/* Two measures of different magnitude on one axis flattens
                       the smaller into the baseline. A second y-axis would be
@@ -260,19 +300,32 @@ function Dashboard() {
             </dl>
           )}
 
-          <Suspense
-            fallback={<div className="chart-wrap"><div className="placeholder">Loading chart…</div></div>}
-          >
-            <HistoryChart
-              tags={visibleTags}
+          {view === 'table' ? (
+            <DataTable
+              columns={table.columns}
+              groups={table.groups}
+              rows={table.rows}
               colors={colors}
-              data={merged.rows}
-              rangeMs={range.ms}
-              indexed={indexedNow}
+              range={range}
+              deviceId={DEVICE_ID}
               loading={history.loading}
               error={history.error}
             />
-          </Suspense>
+          ) : (
+            <Suspense
+              fallback={<div className="chart-wrap"><div className="placeholder">Loading chart…</div></div>}
+            >
+              <HistoryChart
+                tags={visibleTags}
+                colors={colors}
+                data={merged.rows}
+                rangeMs={range.ms}
+                indexed={indexedNow}
+                loading={history.loading}
+                error={history.error}
+              />
+            </Suspense>
+          )}
 
           <ChartLegend
             tags={tagList}
@@ -300,6 +353,10 @@ function Dashboard() {
 // slash is the one character an RTDB key can never contain, so this can never
 // collide with a real tag and always resolves to an empty visible list.
 const CLEARED = '/cleared'
+
+// A stable identity for "no table built", so the memo below it does not hand
+// the component a fresh empty object on every chart tick.
+const EMPTY_TABLE = { columns: [], groups: [], rows: [] }
 
 /**
  * One figure from the selected window. `live` marks the only one of the four
