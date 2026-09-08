@@ -327,7 +327,7 @@ function Stat({ label, tag, value, live = false }) {
 function Masthead({ deviceId, periodMs }) {
   return (
     <header className="masthead">
-      <h1>RH-W Telemetry</h1>
+      <h1>Telemetry - INSTRUBYTE</h1>
       {deviceId && (
         <span className="device">
           {deviceId}
