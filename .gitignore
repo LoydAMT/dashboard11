@@ -12,6 +12,13 @@ dist
 dist-ssr
 *.local
 
+# Env files. Only .env.example is committed - it carries the variable names
+# with no values. Everything else stays local; on Vercel the same variables
+# are set in the project's environment settings, not in the repo.
+.env
+.env.*
+!.env.example
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json
