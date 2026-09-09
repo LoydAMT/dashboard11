@@ -5,17 +5,28 @@
 // here costs the pusher nothing and removes the whole class of "someone with
 // the web config forged a reading" problems.
 //
-// Real accounts, checked two ways, both required:
+// Multi-device model, all under devices/{deviceId}/. Access is per device,
+// checked two ways at every gated node, both required:
 //   1. auth.token.firebase.sign_in_provider !== 'anonymous' - not enough by
 //      itself. Enabling the Email/Password provider (required for real
 //      sign-in to work at all) also enables public self-registration through
 //      the identical API, since the client's API key is not a secret - this
 //      alone would let anyone who finds it create an account and pass.
-//   2. AUTHORIZED - the account's uid is listed under authorized/, an
-//      explicit allowlist maintained by hand in the console. This is the
-//      actual boundary; check 1 only rules out anonymous.
-// AUTHORIZED is spelled out below rather than repeated at every node, so
-// there is exactly one place that defines what it means to be let in.
+//   2. That account is a viewer or operator of this specific device, or a
+//      global admin. viewers/ and operators/ are admin-provisioned by hand
+//      in the console and never written by the app; treated as equivalent
+//      for now (VFD control is a separate pass), which is why both are
+//      accepted identically below rather than only operators being allowed
+//      to read.
+//
+// access/{uid}/{deviceId} is a separate, client-readable index of "which
+// devices does this account see" - it exists only because Firebase cannot
+// query "which devices list my uid" the other way around. It is navigation
+// data, not a security decision: the rules below never reference it. It can
+// in principle drift from devices/{deviceId}/viewers|operators (an admin
+// mirrors both by hand); when it does, the rules below are what actually
+// governs access, and the app is expected to treat the resulting
+// PERMISSION_DENIED as a normal, handled state, not a crash.
 //
 // history/ is queried with orderByKey(), which needs no .indexOn - keys are
 // always indexed.
@@ -24,36 +35,64 @@
     ".read": false,
     ".write": false,
 
-    "latest": {
-      ".read": "auth != null && auth.token.firebase.sign_in_provider !== 'anonymous' && root.child('authorized/'+auth.uid).val() === true",
-      ".write": false
+    "devices": {
+      "$deviceId": {
+        // A session may read its own membership check inputs implicitly via
+        // the root.child() calls below; it never reads viewers/operators
+        // directly (see those nodes' own rules further down).
+        "latest": {
+          ".read": "auth != null && auth.token.firebase.sign_in_provider !== 'anonymous' && (root.child('devices/'+$deviceId+'/viewers/'+auth.uid).val() === true || root.child('devices/'+$deviceId+'/operators/'+auth.uid).val() === true || root.child('admins/'+auth.uid).val() === true)",
+          ".write": false
+        },
+
+        "history": {
+          ".read": "auth != null && auth.token.firebase.sign_in_provider !== 'anonymous' && (root.child('devices/'+$deviceId+'/viewers/'+auth.uid).val() === true || root.child('devices/'+$deviceId+'/operators/'+auth.uid).val() === true || root.child('admins/'+auth.uid).val() === true)",
+          ".write": false
+        },
+
+        "tags": {
+          ".read": "auth != null && auth.token.firebase.sign_in_provider !== 'anonymous' && (root.child('devices/'+$deviceId+'/viewers/'+auth.uid).val() === true || root.child('devices/'+$deviceId+'/operators/'+auth.uid).val() === true || root.child('admins/'+auth.uid).val() === true)",
+          ".write": false
+        },
+
+        "status": {
+          ".read": "auth != null && auth.token.firebase.sign_in_provider !== 'anonymous' && (root.child('devices/'+$deviceId+'/viewers/'+auth.uid).val() === true || root.child('devices/'+$deviceId+'/operators/'+auth.uid).val() === true || root.child('admins/'+auth.uid).val() === true)",
+          ".write": false
+        },
+
+        // Closed to the client both ways - admin-provisioned in the console
+        // by hand, read only internally via root.child() from the rules
+        // above. A client read here would leak the full member list of a
+        // device to anyone who happened to be on it.
+        "viewers": {
+          ".read": false,
+          ".write": false
+        },
+
+        "operators": {
+          ".read": false,
+          ".write": false
+        }
+      }
     },
 
-    "history": {
-      ".read": "auth != null && auth.token.firebase.sign_in_provider !== 'anonymous' && root.child('authorized/'+auth.uid).val() === true",
-      ".write": false
-    },
-
-    "status": {
-      ".read": "auth != null && auth.token.firebase.sign_in_provider !== 'anonymous' && root.child('authorized/'+auth.uid).val() === true",
-      ".write": false
-    },
-
-    "tags": {
-      ".read": "auth != null && auth.token.firebase.sign_in_provider !== 'anonymous' && root.child('authorized/'+auth.uid).val() === true",
-      ".write": false
-    },
-
-    // A session may always read its own entry here, whether or not it turns
-    // out to be true - the app needs to tell a real-but-unlisted account
-    // "you are not authorized" rather than have that check itself be the
-    // thing that fails silently. auth.uid === $uid keeps that to strictly
-    // one's own status, never anyone else's.
-    "authorized": {
+    // A session may always read its own index, whether or not it is
+    // populated - this is what lets "no devices yet" render as a calm,
+    // expected state rather than a failed read. auth.uid === $uid keeps it to
+    // strictly one's own entry, never anyone else's.
+    "access": {
       "$uid": {
         ".read": "auth != null && auth.uid === $uid",
         ".write": false
       }
+    },
+
+    // Global, rare, grants every device - see the note at the top. Closed to
+    // direct client reads for the same reason viewers/operators are: it is
+    // referenced internally only.
+    "admins": {
+      ".read": false,
+      ".write": false
     },
 
     "commands": {

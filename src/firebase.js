@@ -40,6 +40,3 @@ const app = configured ? initializeApp(config) : null
 
 export const db = configured ? getDatabase(app) : null
 export const auth = configured ? getAuth(app) : null
-
-// Which device node drives the live/stale badge.
-export const DEVICE_ID = import.meta.env.VITE_DEVICE_ID || 'RHW01'

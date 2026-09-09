@@ -605,6 +605,35 @@ body {
   margin: 12px 0;
 }
 
+/* A red left edge means trouble everywhere else on this page - wrong for a
+   loading state, a device picker, or "no access yet", none of which are
+   errors. Same shape, a calmer edge. */
+.notice-info { border-left-color: var(--border-strong); }
+
+.device-picker-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.device-picker-item {
+  font: inherit;
+  font-size: .92rem;
+  font-weight: 600;
+  text-align: left;
+  padding: 12px 14px;
+  min-height: 48px;
+  border: 1px solid var(--border-strong);
+  border-radius: 10px;
+  background: var(--surface);
+  color: var(--text);
+  cursor: pointer;
+}
+
+.device-picker-item:hover { border-color: var(--accent); }
+.device-picker-item:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+
 .notice h2 { margin: 0 0 8px; font-size: 1rem; }
 
 .notice p {

@@ -25,8 +25,8 @@ export function ErrorNotice({ title, error }) {
         <p>
           The database rules are rejecting this read. Deploy them with{' '}
           <code>firebase deploy --only database</code>, and confirm this
-          account's uid is present under <code>authorized/</code> in the
-          database.
+          account's uid is present under <code>devices/&#123;deviceId&#125;/viewers</code>{' '}
+          or <code>operators</code> in the database.
         </p>
       )}
     </div>

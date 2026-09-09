@@ -1,6 +1,7 @@
 import { lazy, Suspense, useMemo, useState } from 'react'
-import { DEVICE_ID, missingConfig } from './firebase'
+import { missingConfig } from './firebase'
 import { useAuth } from './hooks/useAuth'
+import { useDeviceAccess } from './hooks/useDeviceAccess'
 import { useConnection } from './hooks/useConnection'
 import { useRtdbValue } from './hooks/useRtdbValue'
 import { useCadence } from './hooks/useCadence'
@@ -20,6 +21,7 @@ import { ConfigNotice, ErrorNotice } from './components/ConfigNotice'
 import { DataTable } from './components/DataTable'
 import { VfdControl } from './components/VfdControl'
 import { SignIn } from './components/SignIn'
+import { DevicePicker } from './components/DevicePicker'
 import { signOutUser } from './auth'
 
 // Recharts is by far the heaviest thing in the bundle and none of it is needed
@@ -44,15 +46,41 @@ export default function App() {
 }
 
 function Dashboard() {
-  const { user, resolved, realUser, authLoading, ready, mayControl } = useAuth()
+  const { user, resolved, realUser } = useAuth()
+
+  // access/{uid} - navigation data, not the security boundary (see
+  // database.rules.json). Only ever asked for once there is a real identity
+  // to ask it about.
+  const deviceAccess = useDeviceAccess(realUser ? user : null)
+
+  const [chosenDeviceId, setChosenDeviceId] = useState(null)
+
+  // Auto-select the common case (exactly one device) without ever showing a
+  // picker for it. A previously chosen device that has fallen out of the
+  // access list (revoked mid-session) is not trusted just because state still
+  // remembers it - falls back to auto-select, or back to the picker.
+  const autoDeviceId = deviceAccess.devices.length === 1 ? deviceAccess.devices[0].id : null
+  const chosenStillValid = deviceAccess.devices.some((d) => d.id === chosenDeviceId)
+  const deviceId = (chosenStillValid ? chosenDeviceId : null) || autoDeviceId
+  const role = deviceAccess.devices.find((d) => d.id === deviceId)?.role || null
+
+  // Whether *this* device's data may be read. Distinct from `realUser`: a
+  // real, authorized-somewhere account can still have no device selected yet
+  // (the picker is showing) or lack access to this specific one.
+  const ready = Boolean(deviceId)
+  // Viewers and operators are treated identically this pass (VFD control is a
+  // separate one) - `role` itself stays available so narrowing this to
+  // `role === 'operator'` later is a one-line change, not a re-plumb.
+  const mayControl = Boolean(role)
 
   // `.info/connected` is local to the SDK, so it is watched regardless of auth.
   const connected = useConnection()
 
-  // Data reads wait for sign-in; the rules would reject them otherwise.
-  const latest = useRtdbValue('latest', ready)
-  const tags = useRtdbValue('tags', ready)
-  const status = useRtdbValue(`status/${DEVICE_ID}`, ready)
+  // Data reads wait for a resolved device; the rules would reject them
+  // otherwise, and there is nothing to build a path from before then anyway.
+  const latest = useRtdbValue(deviceId ? `devices/${deviceId}/latest` : null, ready)
+  const tags = useRtdbValue(deviceId ? `devices/${deviceId}/tags` : null, ready)
+  const status = useRtdbValue(deviceId ? `devices/${deviceId}/status` : null, ready)
 
   const now = useNow(1000)
 
@@ -145,7 +173,7 @@ function Dashboard() {
   // Tags, not bare keys — each one's own intervalMs decides whether its
   // history is read as minute rollups or as raw samples (see
   // useSeriesHistory), and a bare key has no interval to make that call with.
-  const history = useSeriesHistory(visibleTags, range, ready && visibleKeys.length > 0)
+  const history = useSeriesHistory(visibleTags, range, deviceId, ready && visibleKeys.length > 0)
 
   const merged = useMemo(
     () => mergeSeries({
@@ -186,14 +214,14 @@ function Dashboard() {
   return (
     <div className="app">
       <Masthead
-        deviceId={ready ? DEVICE_ID : null}
+        deviceId={ready ? deviceId : null}
         periodMs={periodMs}
         email={ready ? user?.email : null}
         onSignOut={signOutUser}
       />
 
       {!resolved && (
-        <div className="notice">
+        <div className="notice notice-info">
           <h2>Loading…</h2>
           <p>Checking your session.</p>
         </div>
@@ -201,27 +229,32 @@ function Dashboard() {
 
       {resolved && !realUser && <SignIn />}
 
-      {resolved && realUser && authLoading && (
-        <div className="notice">
+      {resolved && realUser && deviceAccess.loading && (
+        <div className="notice notice-info">
           <h2>Checking access…</h2>
-          <p>Confirming this account is authorized to use this dashboard.</p>
+          <p>Looking up which devices this account can see.</p>
         </div>
       )}
 
-      {resolved && realUser && !authLoading && !ready && (
+      {resolved && realUser && !deviceAccess.loading && deviceAccess.devices.length === 0 && (
         <NotAuthorized email={user?.email} onSignOut={signOutUser} />
+      )}
+
+      {resolved && realUser && !deviceAccess.loading && deviceAccess.devices.length > 1 && !deviceId && (
+        <DevicePicker devices={deviceAccess.devices} onSelect={setChosenDeviceId} />
       )}
 
       {ready && (
         <>
         <StatusBanner state={state} status={status.data} />
-  
-        {/* mayControl is always true here - the surrounding `ready` gate above
-            already requires it. authResolved is likewise always true by this
-            point; VfdControl keeps the prop so its own "checking session" copy
-            stays correct if it is ever reused somewhere reachable before this
-            gate. */}
-        <VfdControl deviceId={DEVICE_ID} mayControl={mayControl} authResolved />
+
+        {/* mayControl reflects this device's role (viewer or operator both
+            pass, per the spec - see the note where it is computed above).
+            authResolved is always true here, since VfdControl only ever
+            renders once `ready` (a resolved device) is true; kept as a prop
+            so its own "checking session" copy stays correct if it is ever
+            reused somewhere reachable before this gate. */}
+        <VfdControl deviceId={deviceId} mayControl={mayControl} authResolved />
   
         {dataError && <ErrorNotice title="Could not read the database" error={dataError} />}
   
@@ -231,9 +264,9 @@ function Dashboard() {
             <p>
               {latest.loading
                 ? 'Waiting for the first read.'
-                : `Nothing under latest/ or tags/. The dashboard discovers tags from
-                   the data, so they will appear here as soon as the pusher writes
-                   them — no change needed on this side.`}
+                : `Nothing under devices/${deviceId}/latest or tags/. The dashboard
+                   discovers tags from the data, so they will appear here as soon as
+                   the pusher writes them — no change needed on this side.`}
             </p>
           </div>
         )}
@@ -361,7 +394,7 @@ function Dashboard() {
                 rows={table.rows}
                 colors={colors}
                 range={range}
-                deviceId={DEVICE_ID}
+                deviceId={deviceId}
                 loading={history.loading}
                 error={history.error}
               />
@@ -394,7 +427,7 @@ function Dashboard() {
         )}
   
         <footer className="footnote">
-          Values are one-minute rollups from {DEVICE_ID}; timestamps shown in your
+          Values are one-minute rollups from {deviceId}; timestamps shown in your
           local time. Staleness threshold {Math.round(thresholdMs / 1000)}s, derived
           from an observed publish interval of {formatInterval(periodMs)}.
           {' '}History is loaded only for the trends on the chart, up to {MAX_SERIES} at once.
@@ -471,19 +504,20 @@ function Masthead({ deviceId, periodMs, email, onSignOut }) {
 }
 
 /**
- * A real, non-anonymous sign-in that is not on the authorized/ allowlist.
- * Distinct from the sign-in form: the password was correct, an administrator
- * simply has not added this account yet - saying so plainly is more useful
- * than a screen indistinguishable from a bad password.
+ * A real, non-anonymous sign-in with no entries under access/{uid} - not on
+ * any device's viewers or operators list yet. Distinct from the sign-in
+ * form: the password was correct, an administrator simply has not granted
+ * this account a device yet - a normal, expected state with manual,
+ * out-of-band provisioning (see database.rules.json), not an error.
  */
 function NotAuthorized({ email, onSignOut }) {
   return (
-    <div className="notice">
-      <h2>Not authorized</h2>
+    <div className="notice notice-info">
+      <h2>No device access yet</h2>
       <p>
         {email ? <>The account <code>{email}</code> is</> : 'This account is'}{' '}
-        signed in, but has not been given access to this dashboard. Contact
-        whoever administers it to be added.
+        signed in, but has not been granted access to any device. Contact
+        whoever administers this dashboard to be added.
       </p>
       <button type="button" className="signout-btn" onClick={onSignOut}>
         Sign out

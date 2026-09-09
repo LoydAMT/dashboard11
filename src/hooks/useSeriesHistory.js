@@ -68,9 +68,12 @@ const ROLLUP_KEY_CEILING = '9999999999999'
  * Cache and subscription identity is keyed on the range's *id*, not its `ms`
  * - a raw range and a rollup range can share the same duration (raw-1h and
  * 1h are both an hour) while needing completely different data, and `ms`
- * alone cannot tell them apart.
+ * alone cannot tell them apart. `deviceId` is folded into that same identity
+ * so a device switch (via the picker) cannot serve one device's cached rows
+ * under another's key, even though in practice a switch remounts this hook
+ * entirely rather than changing `deviceId` on a live instance.
  */
-export function useSeriesHistory(tags, range, enabled = true) {
+export function useSeriesHistory(tags, range, deviceId, enabled = true) {
   // Rows are state, not a ref: they are read while rendering, and a ref read
   // during render is not guaranteed to have been seen by React.
   //
@@ -105,7 +108,7 @@ export function useSeriesHistory(tags, range, enabled = true) {
     // already in hand. The rows they gathered stay cached under their own
     // window key.
     for (const [key, sub] of subs.current) {
-      if (!wanted.has(key) || sub.rangeId !== range.id) {
+      if (!wanted.has(key) || sub.rangeId !== range.id || sub.deviceId !== deviceId) {
         sub.cancelled = true
         sub.unsubscribe()
         subs.current.delete(key)
@@ -115,7 +118,7 @@ export function useSeriesHistory(tags, range, enabled = true) {
     for (const key of keyList) {
       if (subs.current.has(key)) continue
 
-      const sub = { rangeId: range.id, cancelled: false, unsubscribe: () => {} }
+      const sub = { rangeId: range.id, deviceId, cancelled: false, unsubscribe: () => {} }
       subs.current.set(key, sub)
 
       // Decided once, at the moment this subscription is (re)established -
@@ -125,8 +128,9 @@ export function useSeriesHistory(tags, range, enabled = true) {
       const tag = tagsRef.current.find((t) => t.key === key)
       const rawOnly = usesRawOnly(tag?.intervalMs) || isRawRange(range)
 
-      const path = rawOnly ? `history/${key}/raw` : `history/${key}`
-      const slot = `${key}@${range.id}`
+      const devicePath = `devices/${deviceId}/history/${key}`
+      const path = rawOnly ? `${devicePath}/raw` : devicePath
+      const slot = `${deviceId}:${key}@${range.id}`
       const since = floorToMinute(Date.now() - range.ms)
 
       // Keyed by timestamp so the backfill and the live tail merge without
@@ -215,7 +219,7 @@ export function useSeriesHistory(tags, range, enabled = true) {
     // Depends on `range` itself, not just `range.id`: both `.id` and `.ms` are
     // read above, and range objects are the stable module constants from
     // lib/ranges.js, so this re-runs exactly when the id would have anyway.
-  }, [keysId, range])
+  }, [keysId, range, deviceId])
 
   useEffect(() => {
     const active = subs.current
@@ -235,7 +239,7 @@ export function useSeriesHistory(tags, range, enabled = true) {
     let ready = 0
 
     for (const key of keyList) {
-      const entry = store[`${key}@${range.id}`]
+      const entry = store[`${deviceId}:${key}@${range.id}`]
       byKey[key] = entry?.rows || []
       if (entry?.error && !error) error = entry.error
       if (entry) ready += 1
@@ -248,7 +252,7 @@ export function useSeriesHistory(tags, range, enabled = true) {
       // invites reading a trend that has not arrived as one that is flat.
       loading: keyList.length > 0 && ready < keyList.length,
     }
-  }, [keysId, store, range])
+  }, [keysId, store, range, deviceId])
 }
 
 /**
