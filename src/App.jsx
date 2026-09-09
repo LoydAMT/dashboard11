@@ -6,7 +6,7 @@ import { useRtdbValue } from './hooks/useRtdbValue'
 import { useCadence } from './hooks/useCadence'
 import { useSeriesHistory } from './hooks/useSeriesHistory'
 import { useNow } from './hooks/useNow'
-import { systemState, stalenessThreshold, isStaleLevel } from './lib/health'
+import { systemState, stalenessThreshold, tagStalenessThreshold, isStaleLevel } from './lib/health'
 import { discoverTagKeys, buildTag, formatValue, displayUnit } from './lib/tags'
 import { colorForIndex, MAX_SERIES } from './lib/palette'
 import { mergeSeries } from './lib/series'
@@ -139,7 +139,10 @@ function Dashboard() {
 
   // History is fetched per shown trend, and only for shown trends: hiding one
   // drops its listener. The billed bandwidth scales with what is on screen.
-  const history = useSeriesHistory(visibleKeys, range, ready && visibleKeys.length > 0)
+  // Tags, not bare keys — each one's own intervalMs decides whether its
+  // history is read as minute rollups or as raw samples (see
+  // useSeriesHistory), and a bare key has no interval to make that call with.
+  const history = useSeriesHistory(visibleTags, range, ready && visibleKeys.length > 0)
 
   const merged = useMemo(
     () => mergeSeries({
@@ -200,9 +203,12 @@ function Dashboard() {
         <div className="grid">
           {tagList.map((tag) => {
             // A tag is stale if the link is down, or if this particular tag has
-            // stopped reporting while others carry on.
+            // stopped reporting on its *own* schedule - a 12-hour accumulator
+            // six hours quiet is not due yet, so it is judged against its own
+            // interval, never the device-wide one.
             const ownAge = tag.ts != null ? now - tag.ts : null
-            const tagStale = systemStale || ownAge == null || ownAge > thresholdMs
+            const tagThresholdMs = tagStalenessThreshold(tag.intervalMs)
+            const tagStale = systemStale || ownAge == null || ownAge > tagThresholdMs
             const shown = visibleKeys.includes(tag.key)
 
             return (

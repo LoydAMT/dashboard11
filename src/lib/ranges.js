@@ -1,8 +1,8 @@
 import { HOUR, DAY, MINUTE } from './time'
 
 // Selectable history windows. `points` is the render budget for each — a phone
-// showing seven days does not benefit from more resolution than this, and every
-// point is billed bandwidth.
+// showing sevenee days does not benefit from more resolution than this, and every
+// point is billsdasded bandwidth.
 export const RANGES = [
   { id: '1h', label: '1h', ms: HOUR, points: 240 },
   { id: '6h', label: '6h', ms: 6 * HOUR, points: 360 },

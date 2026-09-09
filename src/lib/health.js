@@ -5,12 +5,21 @@
 // Every value shown must carry its own state, and stale must be impossible to
 // mistake for live.
 
-import { SECOND, MINUTE } from './time'
+import { SECOND, MINUTE, HOUR } from './time'
 
 export const DEFAULT_PERIOD_MS = 5 * SECOND // brief's nominal, used only until observed
 const STALE_MULTIPLE = 6                    // ~6 missed publishes before doubting
 const MIN_THRESHOLD = 15 * SECOND
 const MAX_THRESHOLD = 5 * MINUTE
+
+// Per-tag bounds are wider than the device's. The device cadence is always
+// fast - a few seconds - so 5 minutes is already a generous multiple of it.
+// A tag's own interval can legitimately be a 12-hour energy accumulator, and
+// clamping that to 5 minutes would flag it as stale the moment it finishes
+// publishing. The floor stays the same 15s: a sub-second tag jittering by a
+// few hundred ms is not a fault either way.
+const TAG_MIN_THRESHOLD = 15 * SECOND
+const TAG_MAX_THRESHOLD = 48 * HOUR
 
 /**
  * How old `lastSeen` may get before values stop counting as current.
@@ -25,6 +34,24 @@ const MAX_THRESHOLD = 5 * MINUTE
 export function stalenessThreshold(observedPeriodMs) {
   const period = observedPeriodMs > 0 ? observedPeriodMs : DEFAULT_PERIOD_MS
   return Math.min(MAX_THRESHOLD, Math.max(MIN_THRESHOLD, period * STALE_MULTIPLE))
+}
+
+/**
+ * How old a *tag's* own last reading may get before it stops counting as
+ * current - the same "a few missed publishes, clamped" rule as the device
+ * banner, but keyed to that tag's own configured interval instead of the
+ * device-wide one.
+ *
+ * This is what makes a 12-hour accumulator and a one-second sensor coexist on
+ * the same grid: each is only ever judged against its own schedule. A tag
+ * with no interval reported falls back to the same nominal default the device
+ * banner uses before it has observed a real cadence - treating "unknown" as
+ * "assume fast" is the safer of the two wrong guesses, since it flags a quiet
+ * tag sooner rather than hiding a real outage behind an unearned pass.
+ */
+export function tagStalenessThreshold(intervalMs) {
+  const interval = typeof intervalMs === 'number' && intervalMs > 0 ? intervalMs : DEFAULT_PERIOD_MS
+  return Math.min(TAG_MAX_THRESHOLD, Math.max(TAG_MIN_THRESHOLD, interval * STALE_MULTIPLE))
 }
 
 /**

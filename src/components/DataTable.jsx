@@ -34,6 +34,21 @@ export function DataTable({
     [columns],
   )
 
+  // A live reading, not a row of the window. It does not belong to any minute
+  // in the table below it - it reads *right now*, not "as of the last
+  // rollup" - so it is pinned above the historical rows instead of folded
+  // into one, with everything but its own `now` cell left blank rather than
+  // guessed from an aggregate that means something different.
+  const nowRow = useMemo(() => {
+    const cells = {}
+    let hasAny = false
+    for (const g of groups) {
+      if (g.tag.value != null) hasAny = true
+      cells[`${g.key}:now`] = g.tag.value
+    }
+    return hasAny ? { cells } : null
+  }, [groups])
+
   const exportAs = async (kind) => {
     if (!rows.length) return
     setBusy(kind)
@@ -123,6 +138,16 @@ export function DataTable({
             </tr>
           </thead>
           <tbody>
+            {nowRow && (
+              <tr className="row-now">
+                <th scope="row" className="col-time">Now</th>
+                {valueColumns.map((c) => (
+                  <td key={c.id} className={c.kind === 'num' ? 'num' : ''}>
+                    {c.field === 'now' ? cellText(c, nowRow) : '—'}
+                  </td>
+                ))}
+              </tr>
+            )}
             {shown.map((row) => (
               <tr key={row.t}>
                 <th scope="row" className="col-time">{formatLocal(row.t)}</th>

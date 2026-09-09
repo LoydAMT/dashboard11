@@ -8,7 +8,7 @@
 
 import { displayUnit } from './tags'
 
-const FIELD_LABEL = { min: 'min', avg: 'mean', max: 'max' }
+const FIELD_LABEL = { min: 'min', avg: 'mean', max: 'max', now: 'now' }
 
 /**
  * Column definitions and time-aligned rows for the tags currently on screen.
@@ -30,16 +30,19 @@ export function buildTable({ byKey, tags, range, nowMs }) {
   for (const tag of tags) {
     // A mean of a boolean is 0.5 as often as not, and min/max of one is just
     // "did it ever change". One state column says more than three numbers.
+    // `now` is appended to either shape: it is not an aggregate of the window
+    // at all, just the tag's current live value, and belongs next to the
+    // rollups regardless of how many of those a tag gets.
     const fields = tag.dataType === 'bool' || tag.dataType === 'text'
-      ? ['avg']
-      : ['min', 'avg', 'max']
+      ? ['avg', 'now']
+      : ['min', 'avg', 'max', 'now']
     const unit = displayUnit(tag)
 
     for (const field of fields) {
       columns.push({
         id: `${tag.key}:${field}`,
-        label: fields.length === 1 ? tag.name : `${tag.name} ${FIELD_LABEL[field]}`,
-        short: fields.length === 1 ? 'value' : FIELD_LABEL[field],
+        label: `${tag.name} ${FIELD_LABEL[field]}`,
+        short: FIELD_LABEL[field],
         unit,
         field,
         tag,

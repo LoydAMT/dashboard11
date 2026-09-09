@@ -56,6 +56,13 @@ export function buildTag(key, latest, meta) {
     loLimit: numOrNull(meta?.loLimit),
     hiLimit: numOrNull(meta?.hiLimit),
     hasReading: latest != null && latest.value !== undefined,
+    // The device's own configured push interval for *this* tag. Tags no
+    // longer share one cadence - a fast tag and a once-a-day accumulator can
+    // coexist - so staleness and history-source decisions key off this rather
+    // than the device-wide interval useCadence measures. Absent on an older
+    // or unconfigured tag, in which case callers fall back to their own
+    // default rather than treat a missing field as "instant".
+    intervalMs: numOrNull(meta?.intervalMs),
   }
 }
 

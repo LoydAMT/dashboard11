@@ -859,6 +859,18 @@ body {
 .data-table tbody tr:last-child td,
 .data-table tbody tr:last-child .col-time { border-bottom: 0; }
 
+/* The live-reading row pinned above the historical rollups. It is not one of
+   the window's minutes, so it gets a visibly different treatment rather than
+   blending into the striping - a plain number here could otherwise be read as
+   just another row of the table. */
+.data-table tbody tr.row-now td,
+.data-table tbody tr.row-now .col-time {
+  background: var(--live-bg);
+  color: var(--live);
+  font-weight: 620;
+  border-bottom: 1px solid var(--live);
+}
+
 @media (max-width: 560px) {
   .data-table { font-size: .74rem; }
   .data-table thead th,
