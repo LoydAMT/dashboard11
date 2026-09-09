@@ -401,7 +401,15 @@ function Stat({ label, tag, value, live = false }) {
 function Masthead({ deviceId, periodMs }) {
   return (
     <header className="masthead">
-      <h1>Telemetry - INSTRUBYTE</h1>
+      <div className="masthead-brand">
+        {/* Decorative: the wordmark beside it already names the company, so a
+            screen reader gaining nothing from "image" would only add noise. */}
+        <img className="masthead-logo" src="/favicon.svg" alt="" aria-hidden="true" />
+        <div className="masthead-text">
+          <h1>INSTRUBYTE</h1>
+          <span className="masthead-tagline">Telemetry</span>
+        </div>
+      </div>
       {deviceId && (
         <span className="device">
           {deviceId}

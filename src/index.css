@@ -47,6 +47,11 @@
   --radius: 12px;
   --shadow: 0 1px 2px rgba(16, 20, 28, .06), 0 4px 12px rgba(16, 20, 28, .05);
 
+  /* Sampled from the logo mark, not the data-viz palette - a brand hue stays
+     fixed across themes, unlike --text/--surface, which exist to invert. */
+  --brand-1: #7e14ff;
+  --brand-2: #47bfff;
+
   color-scheme: light dark;
 }
 
@@ -120,28 +125,79 @@ body {
   top: 0;
   z-index: 5;
   display: flex;
-  align-items: baseline;
+  align-items: center;
   justify-content: space-between;
   gap: 12px;
   flex-wrap: wrap;
   margin: 0 -12px 14px;
-  padding: 10px 14px 11px;
+  padding: 9px 14px;
   background: color-mix(in srgb, var(--bg) 86%, transparent);
   backdrop-filter: saturate(180%) blur(10px);
   border-bottom: 1px solid var(--border);
 }
 
+/* A hairline brand accent, not a redesign: everywhere else on this page a
+   colour means something (live/stale, an alarm, a series) and none of that
+   vocabulary should compete with a mark of ownership. Anchored under the
+   sticky header, where it reads as "whose app this is" and nowhere else. */
+.masthead::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: -1px;
+  height: 2px;
+  background: linear-gradient(90deg, var(--brand-1), var(--brand-2));
+}
+
+.masthead-brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+/* Height-only sizing, not a square box: favicon.svg's canvas is not a perfect
+   square, and forcing one would squash it - a brand mark is exactly the kind
+   of image where "slightly off-model" is more noticeable than most. */
+.masthead-logo {
+  height: 30px;
+  width: auto;
+  flex: none;
+  /* The mark is a bold gradient with no background of its own; the resting
+     shadow ties it to the surface it sits on instead of looking pasted on. */
+  filter: drop-shadow(0 1px 1px rgba(16, 20, 28, .18));
+}
+
+.masthead-text {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  min-width: 0;
+}
+
 .masthead h1 {
   margin: 0;
-  font-size: 1.15rem;
-  font-weight: 650;
+  font-size: 1.05rem;
+  font-weight: 720;
   letter-spacing: -.01em;
+  line-height: 1.15;
+}
+
+.masthead-tagline {
+  font-size: .68rem;
+  font-weight: 620;
+  letter-spacing: .09em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+  line-height: 1.2;
 }
 
 .masthead .device {
   font-size: .8rem;
   color: var(--text-faint);
   font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
 
 /* ---------- status banner ---------- */
