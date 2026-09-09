@@ -1,18 +1,34 @@
-// Sign-in strategy, kept behind one function so it can be swapped.
+// Sign-in strategy, kept behind one module so it can be swapped.
 //
-// Today: anonymous auth. The rules require `auth != null`, so this exists to
-// satisfy them, not to identify anyone.
+// Real accounts: email + password, created one at a time in the Firebase
+// console (Authentication tab) by whoever administers this dashboard. There
+// is no sign-up flow anywhere in this app, on purpose - see the note on
+// AUTHORIZED_PATH in database.rules.json for why "no sign-up form" alone
+// is not the actual security boundary.
 //
-// To move to real accounts later, change `ensureSignedIn` to run your chosen
-// flow (signInWithEmailAndPassword, a popup provider, a custom token) and
-// tighten the read rule in database.rules.json to match. Nothing else in the
-// app inspects how the user was authenticated — it only waits for a user.
+// Nothing outside this module inspects how a user signed in - callers just
+// get a Firebase User or null. Swapping to a different provider later is a
+// change to this file alone.
 
-import { signInAnonymously, onAuthStateChanged } from 'firebase/auth'
+import {
+  signInWithEmailAndPassword,
+  sendPasswordResetEmail,
+  signOut,
+  onAuthStateChanged,
+} from 'firebase/auth'
 import { auth } from './firebase'
 
-export function ensureSignedIn() {
-  return signInAnonymously(auth)
+export function signIn(email, password) {
+  return signInWithEmailAndPassword(auth, email, password)
+}
+
+export function signOutUser() {
+  return signOut(auth)
+}
+
+/** Sends a reset link to an existing account's own address. Never creates one. */
+export function resetPassword(email) {
+  return sendPasswordResetEmail(auth, email)
 }
 
 export function watchAuth(callback) {
@@ -20,26 +36,17 @@ export function watchAuth(callback) {
 }
 
 /**
- * Whether this session may command the VFD.
+ * Whether this session is a real, non-anonymous sign-in.
  *
- * TESTING PHASE - READ BEFORE DEPLOYING ANYWHERE REAL.
- *
- * This currently returns true for any signed-in session, and the only sign-in
- * this app performs is anonymous. In practice that means anyone who can open
- * the dashboard link can start and stop the drive. That is a deliberate choice
- * for bench testing against the RH-W, not an oversight, and it is wrong for
- * production by design.
- *
- * When real sign-in lands, this becomes:
- *
- *     return Boolean(user) && !user.isAnonymous
- *
- * and the matching write condition in database.rules.json under commands/ has
- * to be tightened in the same commit - the rule is the actual gate, this
- * function only decides what to render. Changing one without the other either
- * shows buttons that cannot work or leaves the database open behind a hidden
- * button.
+ * This is not the whole access decision - see App.jsx, which additionally
+ * checks the authorized/{uid} allowlist read from the database before
+ * treating a session as usable. That second check is the one that actually
+ * keeps a self-registered account out; this one only rules out anonymous.
+ * Kept as its own function anyway, because "is this identity real" and "is
+ * this identity on the list" are different questions answered by different
+ * data (the Firebase user object here; a database read there), and collapsing
+ * them into one place would hide which failure is which.
  */
 export function canControl(user) {
-  return Boolean(user)
+  return Boolean(user) && !user.isAnonymous
 }

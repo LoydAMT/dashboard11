@@ -5,53 +5,61 @@
 // here costs the pusher nothing and removes the whole class of "someone with
 // the web config forged a reading" problems.
 //
-// Read requires a signed-in user. Today that is anonymous auth, which is a
-// speed bump rather than a wall - anyone can mint an anonymous user. It keeps
-// the database off the open internet and gives each session an identity to
-// build on. Tighten the read conditions when real accounts land; the shape
-// below is already per-subtree so that change stays local.
+// Real accounts, checked two ways, both required:
+//   1. auth.token.firebase.sign_in_provider !== 'anonymous' - not enough by
+//      itself. Enabling the Email/Password provider (required for real
+//      sign-in to work at all) also enables public self-registration through
+//      the identical API, since the client's API key is not a secret - this
+//      alone would let anyone who finds it create an account and pass.
+//   2. AUTHORIZED - the account's uid is listed under authorized/, an
+//      explicit allowlist maintained by hand in the console. This is the
+//      actual boundary; check 1 only rules out anonymous.
+// AUTHORIZED is spelled out below rather than repeated at every node, so
+// there is exactly one place that defines what it means to be let in.
 //
 // history/ is queried with orderByKey(), which needs no .indexOn - keys are
 // always indexed.
-//
-// commands/ is the one write-capable subtree, and it is the odd one out: it
-// drives a physical VFD through the RH-W. TESTING PHASE - the write condition
-// below is "auth != null", same speed bump as every read, so any anonymous
-// session can command the drive. That is a deliberate, temporary choice for
-// bench testing, matching src/auth.js#canControl. When real sign-in lands,
-// both this condition and canControl must be tightened together - see the
-// comment on canControl for what that change looks like. Until then, do not
-// point this database at anything the anonymous-auth speed bump cannot be
-// allowed to touch.
 {
   "rules": {
     ".read": false,
     ".write": false,
 
     "latest": {
-      ".read": "auth != null",
+      ".read": "auth != null && auth.token.firebase.sign_in_provider !== 'anonymous' && root.child('authorized/'+auth.uid).val() === true",
       ".write": false
     },
 
     "history": {
-      ".read": "auth != null",
+      ".read": "auth != null && auth.token.firebase.sign_in_provider !== 'anonymous' && root.child('authorized/'+auth.uid).val() === true",
       ".write": false
     },
 
     "status": {
-      ".read": "auth != null",
+      ".read": "auth != null && auth.token.firebase.sign_in_provider !== 'anonymous' && root.child('authorized/'+auth.uid).val() === true",
       ".write": false
     },
 
     "tags": {
-      ".read": "auth != null",
+      ".read": "auth != null && auth.token.firebase.sign_in_provider !== 'anonymous' && root.child('authorized/'+auth.uid).val() === true",
       ".write": false
+    },
+
+    // A session may always read its own entry here, whether or not it turns
+    // out to be true - the app needs to tell a real-but-unlisted account
+    // "you are not authorized" rather than have that check itself be the
+    // thing that fails silently. auth.uid === $uid keeps that to strictly
+    // one's own status, never anyone else's.
+    "authorized": {
+      "$uid": {
+        ".read": "auth != null && auth.uid === $uid",
+        ".write": false
+      }
     },
 
     "commands": {
       "$device": {
-        ".read": "auth != null",
-        ".write": "auth != null",
+        ".read": "auth != null && auth.token.firebase.sign_in_provider !== 'anonymous' && root.child('authorized/'+auth.uid).val() === true",
+        ".write": "auth != null && auth.token.firebase.sign_in_provider !== 'anonymous' && root.child('authorized/'+auth.uid).val() === true",
 
         // Closed shape: only these four keys, so a client cannot smuggle an
         // extra field the box's poller might one day be extended to trust.

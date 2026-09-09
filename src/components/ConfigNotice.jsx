@@ -24,8 +24,9 @@ export function ErrorNotice({ title, error }) {
       {denied && (
         <p>
           The database rules are rejecting this read. Deploy them with{' '}
-          <code>firebase deploy --only database</code>, and confirm Anonymous
-          sign-in is enabled under Authentication → Sign-in method.
+          <code>firebase deploy --only database</code>, and confirm this
+          account's uid is present under <code>authorized/</code> in the
+          database.
         </p>
       )}
     </div>

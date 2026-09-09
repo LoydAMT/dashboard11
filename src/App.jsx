@@ -19,6 +19,8 @@ import { ChartLegend } from './components/ChartLegend'
 import { ConfigNotice, ErrorNotice } from './components/ConfigNotice'
 import { DataTable } from './components/DataTable'
 import { VfdControl } from './components/VfdControl'
+import { SignIn } from './components/SignIn'
+import { signOutUser } from './auth'
 
 // Recharts is by far the heaviest thing in the bundle and none of it is needed
 // to answer the question the page exists to answer: what is the value right
@@ -42,7 +44,7 @@ export default function App() {
 }
 
 function Dashboard() {
-  const { ready, error: authError, mayControl, resolved: authResolved } = useAuth()
+  const { user, resolved, realUser, authLoading, ready, mayControl } = useAuth()
 
   // `.info/connected` is local to the SDK, so it is watched regardless of auth.
   const connected = useConnection()
@@ -176,191 +178,229 @@ function Dashboard() {
 
   const dataError = latest.error || tags.error || status.error
 
+  // Every data-fetching hook above is already called unconditionally on every
+  // render regardless of auth state - each one's own `enabled` argument (fed
+  // by `ready`) is what actually keeps it idle before this gate opens. So the
+  // gate below only ever decides what gets *rendered*, never which hooks get
+  // *called* - the one thing that would break the rules of hooks.
   return (
     <div className="app">
-      <Masthead deviceId={DEVICE_ID} periodMs={periodMs} />
+      <Masthead
+        deviceId={ready ? DEVICE_ID : null}
+        periodMs={periodMs}
+        email={ready ? user?.email : null}
+        onSignOut={signOutUser}
+      />
 
-      <StatusBanner state={state} status={status.data} />
-
-      <VfdControl deviceId={DEVICE_ID} mayControl={mayControl} authResolved={authResolved} />
-
-      {authError && <ErrorNotice title="Sign-in failed" error={authError} />}
-      {dataError && <ErrorNotice title="Could not read the database" error={dataError} />}
-
-      {!dataError && tagList.length === 0 && (
+      {!resolved && (
         <div className="notice">
-          <h2>{latest.loading ? 'Loading tags…' : 'No tags yet'}</h2>
-          <p>
-            {latest.loading
-              ? 'Waiting for the first read.'
-              : `Nothing under latest/ or tags/. The dashboard discovers tags from
-                 the data, so they will appear here as soon as the pusher writes
-                 them — no change needed on this side.`}
-          </p>
+          <h2>Loading…</h2>
+          <p>Checking your session.</p>
         </div>
       )}
 
-      {tagList.length > 0 && (
-        <div className="grid">
-          {tagList.map((tag) => {
-            // A tag is stale if the link is down, or if this particular tag has
-            // stopped reporting on its *own* schedule - a 12-hour accumulator
-            // six hours quiet is not due yet, so it is judged against its own
-            // interval, never the device-wide one.
-            const ownAge = tag.ts != null ? now - tag.ts : null
-            const tagThresholdMs = tagStalenessThreshold(tag.intervalMs)
-            const tagStale = systemStale || ownAge == null || ownAge > tagThresholdMs
-            const shown = visibleKeys.includes(tag.key)
+      {resolved && !realUser && <SignIn />}
 
-            return (
-              <TagCard
-                key={tag.key}
-                tag={tag}
-                stale={tagStale}
-                shown={shown}
-                color={colors[tag.key]}
-                blocked={!shown && atCapacity}
-                maxSeries={MAX_SERIES}
-                onSelect={toggleTag}
-                nowMs={now}
-              />
-            )
-          })}
+      {resolved && realUser && authLoading && (
+        <div className="notice">
+          <h2>Checking access…</h2>
+          <p>Confirming this account is authorized to use this dashboard.</p>
         </div>
       )}
 
-      {tagList.length > 0 && (
-        <section className="panel">
-          <div className="panel-head">
-            <div>
-              <div className="panel-title">
-                {single ? single.name : `${visibleTags.length} trends`}
-              </div>
-              <div className="panel-sub">
-                {rawView
-                  ? (view === 'table'
-                      ? 'Every raw reading in the window, newest first — unaggregated'
-                      : single
-                        ? (single.description || 'Raw readings, unaggregated')
-                        : 'Raw readings, unaggregated · tap a card or a legend entry to add or remove a trend')
-                  : (view === 'table'
-                      ? 'Every one-minute rollup in the window, newest first'
-                      : single
-                        ? (single.description ||
-                           (single.unit ? `Unit: ${single.unit}` : 'One-minute rollups'))
-                        : 'One-minute rollups · tap a card or a legend entry to add or remove a trend')}
-              </div>
-            </div>
+      {resolved && realUser && !authLoading && !ready && (
+        <NotAuthorized email={user?.email} onSignOut={signOutUser} />
+      )}
 
-            <div className="panel-controls">
-              <div className="ranges" role="group" aria-label="View">
-                <button
-                  type="button"
-                  className={`range-btn ${view === 'chart' ? 'range-active' : ''}`}
-                  aria-pressed={view === 'chart'}
-                  onClick={() => setView('chart')}
-                >
-                  Chart
-                </button>
-                <button
-                  type="button"
-                  className={`range-btn ${view === 'table' ? 'range-active' : ''}`}
-                  aria-pressed={view === 'table'}
-                  onClick={() => setView('table')}
-                >
-                  Table
-                </button>
+      {ready && (
+        <>
+        <StatusBanner state={state} status={status.data} />
+  
+        {/* mayControl is always true here - the surrounding `ready` gate above
+            already requires it. authResolved is likewise always true by this
+            point; VfdControl keeps the prop so its own "checking session" copy
+            stays correct if it is ever reused somewhere reachable before this
+            gate. */}
+        <VfdControl deviceId={DEVICE_ID} mayControl={mayControl} authResolved />
+  
+        {dataError && <ErrorNotice title="Could not read the database" error={dataError} />}
+  
+        {!dataError && tagList.length === 0 && (
+          <div className="notice">
+            <h2>{latest.loading ? 'Loading tags…' : 'No tags yet'}</h2>
+            <p>
+              {latest.loading
+                ? 'Waiting for the first read.'
+                : `Nothing under latest/ or tags/. The dashboard discovers tags from
+                   the data, so they will appear here as soon as the pusher writes
+                   them — no change needed on this side.`}
+            </p>
+          </div>
+        )}
+  
+        {tagList.length > 0 && (
+          <div className="grid">
+            {tagList.map((tag) => {
+              // A tag is stale if the link is down, or if this particular tag has
+              // stopped reporting on its *own* schedule - a 12-hour accumulator
+              // six hours quiet is not due yet, so it is judged against its own
+              // interval, never the device-wide one.
+              const ownAge = tag.ts != null ? now - tag.ts : null
+              const tagThresholdMs = tagStalenessThreshold(tag.intervalMs)
+              const tagStale = systemStale || ownAge == null || ownAge > tagThresholdMs
+              const shown = visibleKeys.includes(tag.key)
+  
+              return (
+                <TagCard
+                  key={tag.key}
+                  tag={tag}
+                  stale={tagStale}
+                  shown={shown}
+                  color={colors[tag.key]}
+                  blocked={!shown && atCapacity}
+                  maxSeries={MAX_SERIES}
+                  onSelect={toggleTag}
+                  nowMs={now}
+                />
+              )
+            })}
+          </div>
+        )}
+  
+        {tagList.length > 0 && (
+          <section className="panel">
+            <div className="panel-head">
+              <div>
+                <div className="panel-title">
+                  {single ? single.name : `${visibleTags.length} trends`}
+                </div>
+                <div className="panel-sub">
+                  {rawView
+                    ? (view === 'table'
+                        ? 'Every raw reading in the window, newest first — unaggregated'
+                        : single
+                          ? (single.description || 'Raw readings, unaggregated')
+                          : 'Raw readings, unaggregated · tap a card or a legend entry to add or remove a trend')
+                    : (view === 'table'
+                        ? 'Every one-minute rollup in the window, newest first'
+                        : single
+                          ? (single.description ||
+                             (single.unit ? `Unit: ${single.unit}` : 'One-minute rollups'))
+                          : 'One-minute rollups · tap a card or a legend entry to add or remove a trend')}
+                </div>
               </div>
-
-              {view === 'chart' && visibleTags.length > 1 && (
-                <div className="ranges" role="group" aria-label="Value axis">
-                  {/* Two measures of different magnitude on one axis flattens
-                      the smaller into the baseline. A second y-axis would be
-                      the usual reflex and is the wrong answer — it lets the
-                      author place any two lines anywhere relative to each
-                      other. Indexing each trend against its own range keeps a
-                      single honest axis, and the tooltip still quotes the real
-                      values. */}
+  
+              <div className="panel-controls">
+                <div className="ranges" role="group" aria-label="View">
                   <button
                     type="button"
-                    className={`range-btn ${indexed ? '' : 'range-active'}`}
-                    aria-pressed={!indexed}
-                    onClick={() => setIndexed(false)}
+                    className={`range-btn ${view === 'chart' ? 'range-active' : ''}`}
+                    aria-pressed={view === 'chart'}
+                    onClick={() => setView('chart')}
                   >
-                    Actual
+                    Chart
                   </button>
                   <button
                     type="button"
-                    className={`range-btn ${indexed ? 'range-active' : ''}`}
-                    aria-pressed={indexed}
-                    onClick={() => setIndexed(true)}
-                    title="Plot each trend as a percentage of its own range in this window"
+                    className={`range-btn ${view === 'table' ? 'range-active' : ''}`}
+                    aria-pressed={view === 'table'}
+                    onClick={() => setView('table')}
                   >
-                    Indexed
+                    Table
                   </button>
                 </div>
-              )}
-              <RangePicker value={rangeId} onChange={setRangeId} />
+  
+                {view === 'chart' && visibleTags.length > 1 && (
+                  <div className="ranges" role="group" aria-label="Value axis">
+                    {/* Two measures of different magnitude on one axis flattens
+                        the smaller into the baseline. A second y-axis would be
+                        the usual reflex and is the wrong answer — it lets the
+                        author place any two lines anywhere relative to each
+                        other. Indexing each trend against its own range keeps a
+                        single honest axis, and the tooltip still quotes the real
+                        values. */}
+                    <button
+                      type="button"
+                      className={`range-btn ${indexed ? '' : 'range-active'}`}
+                      aria-pressed={!indexed}
+                      onClick={() => setIndexed(false)}
+                    >
+                      Actual
+                    </button>
+                    <button
+                      type="button"
+                      className={`range-btn ${indexed ? 'range-active' : ''}`}
+                      aria-pressed={indexed}
+                      onClick={() => setIndexed(true)}
+                      title="Plot each trend as a percentage of its own range in this window"
+                    >
+                      Indexed
+                    </button>
+                  </div>
+                )}
+                <RangePicker value={rangeId} onChange={setRangeId} />
+              </div>
             </div>
-          </div>
-
-          {/* Summary figures are for a single measurement. Across an overlay
-              they would need a column each, and the mean of a boolean is 0.5 as
-              often as not, which formatValue would render as ON. */}
-          {singleStats && single.dataType !== 'bool' && single.dataType !== 'text' && (
-            <dl className="stats" aria-label={`${single.name} over the last ${range.label}`}>
-              <Stat label="min" tag={single} value={singleStats.min} />
-              <Stat label="mean" tag={single} value={singleStats.avg} />
-              <Stat label="max" tag={single} value={singleStats.max} />
-              <Stat label="now" tag={single} value={single.value} live />
-            </dl>
-          )}
-
-          {view === 'table' ? (
-            <DataTable
-              columns={table.columns}
-              groups={table.groups}
-              rows={table.rows}
-              colors={colors}
-              range={range}
-              deviceId={DEVICE_ID}
-              loading={history.loading}
-              error={history.error}
-            />
-          ) : (
-            <Suspense
-              fallback={<div className="chart-wrap"><div className="placeholder">Loading chart…</div></div>}
-            >
-              <HistoryChart
-                tags={visibleTags}
+  
+            {/* Summary figures are for a single measurement. Across an overlay
+                they would need a column each, and the mean of a boolean is 0.5 as
+                often as not, which formatValue would render as ON. */}
+            {singleStats && single.dataType !== 'bool' && single.dataType !== 'text' && (
+              <dl className="stats" aria-label={`${single.name} over the last ${range.label}`}>
+                <Stat label="min" tag={single} value={singleStats.min} />
+                <Stat label="mean" tag={single} value={singleStats.avg} />
+                <Stat label="max" tag={single} value={singleStats.max} />
+                <Stat label="now" tag={single} value={single.value} live />
+              </dl>
+            )}
+  
+            {view === 'table' ? (
+              <DataTable
+                columns={table.columns}
+                groups={table.groups}
+                rows={table.rows}
                 colors={colors}
-                data={merged.rows}
-                rangeMs={range.ms}
-                raw={rawView}
-                indexed={indexedNow}
+                range={range}
+                deviceId={DEVICE_ID}
                 loading={history.loading}
                 error={history.error}
               />
-            </Suspense>
-          )}
-
-          <ChartLegend
-            tags={tagList}
-            visible={visibleKeys}
-            colors={colors}
-            onToggle={toggleTag}
-            atCapacity={atCapacity}
-            maxSeries={MAX_SERIES}
-          />
-        </section>
+            ) : (
+              <Suspense
+                fallback={<div className="chart-wrap"><div className="placeholder">Loading chart…</div></div>}
+              >
+                <HistoryChart
+                  tags={visibleTags}
+                  colors={colors}
+                  data={merged.rows}
+                  rangeMs={range.ms}
+                  raw={rawView}
+                  indexed={indexedNow}
+                  loading={history.loading}
+                  error={history.error}
+                />
+              </Suspense>
+            )}
+  
+            <ChartLegend
+              tags={tagList}
+              visible={visibleKeys}
+              colors={colors}
+              onToggle={toggleTag}
+              atCapacity={atCapacity}
+              maxSeries={MAX_SERIES}
+            />
+          </section>
+        )}
+  
+        <footer className="footnote">
+          Values are one-minute rollups from {DEVICE_ID}; timestamps shown in your
+          local time. Staleness threshold {Math.round(thresholdMs / 1000)}s, derived
+          from an observed publish interval of {formatInterval(periodMs)}.
+          {' '}History is loaded only for the trends on the chart, up to {MAX_SERIES} at once.
+        </footer>
+        </>
       )}
-
-      <footer className="footnote">
-        Values are one-minute rollups from {DEVICE_ID}; timestamps shown in your
-        local time. Staleness threshold {Math.round(thresholdMs / 1000)}s, derived
-        from an observed publish interval of {formatInterval(periodMs)}.
-        {' '}History is loaded only for the trends on the chart, up to {MAX_SERIES} at once.
-      </footer>
     </div>
   )
 }
@@ -398,7 +438,7 @@ function Stat({ label, tag, value, live = false }) {
   )
 }
 
-function Masthead({ deviceId, periodMs }) {
+function Masthead({ deviceId, periodMs, email, onSignOut }) {
   return (
     <header className="masthead">
       <div className="masthead-brand">
@@ -410,13 +450,45 @@ function Masthead({ deviceId, periodMs }) {
           <span className="masthead-tagline">Telemetry</span>
         </div>
       </div>
-      {deviceId && (
-        <span className="device">
-          {deviceId}
-          {periodMs ? ` · every ${formatInterval(periodMs)}` : ''}
-        </span>
-      )}
+      <div className="masthead-right">
+        {deviceId && (
+          <span className="device">
+            {deviceId}
+            {periodMs ? ` · every ${formatInterval(periodMs)}` : ''}
+          </span>
+        )}
+        {/* Only a signed-in, authorized session ever gets an email to show -
+            App.jsx passes null on every other screen, sign-in form included,
+            where there is nothing yet to sign out of. */}
+        {email && (
+          <button type="button" className="signout-btn" onClick={onSignOut} title={email}>
+            Sign out
+          </button>
+        )}
+      </div>
     </header>
+  )
+}
+
+/**
+ * A real, non-anonymous sign-in that is not on the authorized/ allowlist.
+ * Distinct from the sign-in form: the password was correct, an administrator
+ * simply has not added this account yet - saying so plainly is more useful
+ * than a screen indistinguishable from a bad password.
+ */
+function NotAuthorized({ email, onSignOut }) {
+  return (
+    <div className="notice">
+      <h2>Not authorized</h2>
+      <p>
+        {email ? <>The account <code>{email}</code> is</> : 'This account is'}{' '}
+        signed in, but has not been given access to this dashboard. Contact
+        whoever administers it to be added.
+      </p>
+      <button type="button" className="signout-btn" onClick={onSignOut}>
+        Sign out
+      </button>
+    </div>
   )
 }
 

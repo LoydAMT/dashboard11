@@ -195,12 +195,38 @@ body {
   line-height: 1.2;
 }
 
+.masthead-right {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
 .masthead .device {
   font-size: .8rem;
   color: var(--text-faint);
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
+
+.signout-btn {
+  font: inherit;
+  font-size: .78rem;
+  font-weight: 600;
+  color: var(--text-dim);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  padding: 5px 10px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.signout-btn:hover { color: var(--text); border-color: var(--border-strong); }
+.signout-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+/* Bare, not nested under .masthead-right - used again standalone in the
+   not-authorized notice, where there is no device badge beside it. */
+.notice .signout-btn { margin-top: 4px; }
 
 /* ---------- status banner ---------- */
 
@@ -597,6 +623,117 @@ body {
 
 .notice ul { margin: 6px 0 0; padding-left: 20px; }
 .notice li { font-size: .84rem; color: var(--text-dim); }
+
+/* ---------- sign-in ---------- */
+
+.signin {
+  display: flex;
+  justify-content: center;
+  padding: 32px 4px;
+}
+
+.signin-form {
+  width: 100%;
+  max-width: 340px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  padding: 22px 20px;
+}
+
+.signin-form h2 {
+  margin: 0 0 4px;
+  font-size: 1.05rem;
+}
+
+.signin-sub {
+  margin: 0 0 18px;
+  font-size: .82rem;
+  color: var(--text-faint);
+}
+
+.signin-field {
+  display: block;
+  margin-bottom: 14px;
+}
+
+.signin-field span {
+  display: block;
+  font-size: .78rem;
+  font-weight: 600;
+  color: var(--text-dim);
+  margin-bottom: 5px;
+}
+
+.signin-field input {
+  width: 100%;
+  font: inherit;
+  font-size: .95rem;
+  padding: 10px 12px;
+  border: 1px solid var(--border-strong);
+  border-radius: 9px;
+  background: var(--surface);
+  color: var(--text);
+}
+
+.signin-field input:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.signin-field input:disabled { opacity: .6; }
+
+.signin-error {
+  margin: 0 0 14px;
+  padding: 9px 11px;
+  font-size: .82rem;
+  color: var(--down);
+  background: var(--down-bg);
+  border-radius: 8px;
+}
+
+.signin-hint {
+  margin: 0 0 14px;
+  padding: 9px 11px;
+  font-size: .82rem;
+  color: var(--live);
+  background: var(--live-bg);
+  border-radius: 8px;
+}
+
+.signin-submit {
+  width: 100%;
+  font: inherit;
+  font-weight: 640;
+  font-size: .95rem;
+  padding: 12px;
+  min-height: 46px;
+  border: 0;
+  border-radius: 10px;
+  background: var(--accent);
+  color: #fff;
+  cursor: pointer;
+}
+
+.signin-submit:disabled { opacity: .6; cursor: not-allowed; }
+
+.signin-forgot {
+  display: block;
+  width: 100%;
+  margin-top: 10px;
+  font: inherit;
+  font-size: .8rem;
+  font-weight: 570;
+  padding: 6px;
+  background: transparent;
+  border: 0;
+  color: var(--text-dim);
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.signin-forgot:disabled { opacity: .6; cursor: not-allowed; }
 
 .footnote {
   margin-top: 22px;
