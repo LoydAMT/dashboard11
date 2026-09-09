@@ -157,15 +157,15 @@ body {
   min-width: 0;
 }
 
-/* Height-only sizing, not a square box: favicon.svg's canvas is not a perfect
-   square, and forcing one would squash it - a brand mark is exactly the kind
-   of image where "slightly off-model" is more noticeable than most. */
+/* Height-only sizing rather than a fixed box: favicon-48.png is square today,
+   but letting width follow the source's own ratio means a future re-export
+   at a different aspect never has to touch this rule to avoid being squashed. */
 .masthead-logo {
   height: 30px;
   width: auto;
   flex: none;
-  /* The mark is a bold gradient with no background of its own; the resting
-     shadow ties it to the surface it sits on instead of looking pasted on. */
+  /* A resting shadow ties the mark to the surface it sits on rather than
+     looking pasted flat on top of it. */
   filter: drop-shadow(0 1px 1px rgba(16, 20, 28, .18));
 }
 
