@@ -17,8 +17,14 @@ const NOT_A_READBACK =
   'Shows commands and their acknowledgements, not a readback from the drive.'
 
 export function VfdControl({ deviceId, mayControl, authResolved }) {
+  // Reading commands/ is enabled unconditionally, not on mayControl: this
+  // component only ever mounts once App.jsx's `ready` gate has already
+  // confirmed some access to this device (viewer or better), and the
+  // database rule for commands/ .read matches that - viewer-or-operator-or-
+  // admin, same as telemetry. mayControl narrows only whether send() may
+  // write, further down.
   const { known, flight, busy, settled, send, dismiss, loading, error } =
-    useVfdCommand(deviceId, mayControl)
+    useVfdCommand(deviceId, true)
 
   const [confirming, setConfirming] = useState(null)
   const dialogRef = useRef(null)
@@ -53,7 +59,11 @@ export function VfdControl({ deviceId, mayControl, authResolved }) {
       {!mayControl && (
         <p className="vfd-locked">
           {authResolved
-            ? 'Sign in to command this device. The buttons stay disabled until then.'
+            // This panel only ever mounts once a session already has some
+            // access to the device (App.jsx's gating requires that much to
+            // get here at all), so !mayControl from here on means "a
+            // viewer, not an operator or admin" - never "not signed in".
+            ? 'This account can view this device but is not an operator. Contact whoever administers this dashboard to be given control.'
             : 'Checking your session…'}
         </p>
       )}
@@ -268,6 +278,27 @@ function describeFlight(flight, now) {
       tone: 'bad',
       title: 'Could not send the command',
       detail: `${flight.detail} The command never reached the database, so the VFD was not touched.`,
+    }
+  }
+
+  if (phase === 'denied') {
+    return {
+      tone: 'bad',
+      title: 'Not permitted',
+      // Two different wordings for the two moments this can be detected -
+      // see the comment above the send() catch in useVfdCommand for why the
+      // send-time case cannot confidently blame access alone (a lost race
+      // with another operator's press looks identical), while the
+      // mid-wait case can (nothing but access can change once the write has
+      // already succeeded).
+      detail: flight.atSend
+        ? 'The database refused this command. Most likely this account is no ' +
+          'longer authorized to control this device — check with whoever ' +
+          'administers this dashboard. If someone else pressed a button on ' +
+          'this device at the same moment, try once more first.'
+        : 'This account is no longer authorized to control this device — the ' +
+          'command was sent, but its result could not be confirmed. Sign in ' +
+          'again or check with whoever administers this dashboard.',
     }
   }
 

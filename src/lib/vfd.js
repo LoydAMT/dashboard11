@@ -36,6 +36,17 @@ export const SUCCESS_HOLD_MS = 3_500
 
 export const isCommandValue = (v) => v === VFD_ON || v === VFD_OFF
 
+/**
+ * Whether a Firebase error is the rules refusing this account, specifically -
+ * as opposed to a network failure, a malformed write, or the box simply not
+ * being there. The distinction matters most on a control surface: a denial
+ * means "this account is not allowed to do this" and retrying changes
+ * nothing, where every other failure here is honestly ambiguous about
+ * whether trying again might work.
+ */
+export const isPermissionDenied = (error) =>
+  error?.code === 'PERMISSION_DENIED' || /permission_denied/i.test(error?.message || '')
+
 /** Imperative, for buttons and dialog titles. */
 export const verbFor = (value) => (value === VFD_ON ? 'Start' : 'Stop')
 

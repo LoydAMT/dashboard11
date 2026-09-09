@@ -7,14 +7,17 @@ import {
   ACK_TIMEOUT_MS,
   SUCCESS_HOLD_MS,
   isCommandValue,
+  isPermissionDenied,
   lastKnown,
   resolveAck,
 } from '../lib/vfd'
 
-// Terminal phases: the exchange is over and the buttons come back. None of them
-// retries anything - by the time one of these is on screen the operator's
-// intent may no longer be current, so the next command has to be a fresh press.
-const SETTLED = new Set(['ok', 'stale', 'error', 'superseded', 'timeout', 'send-failed'])
+// Terminal phases: the exchange is over and the buttons come back. None of
+// them retries anything - by the time one of these is on screen the
+// operator's intent may no longer be current (stale/superseded), or a retry
+// plainly would not help (denied), so the next command has to be a fresh
+// press, not an automatic one.
+const SETTLED = new Set(['ok', 'stale', 'error', 'superseded', 'timeout', 'send-failed', 'denied'])
 
 /**
  * One command in flight, from press to verdict.
@@ -29,9 +32,12 @@ const SETTLED = new Set(['ok', 'stale', 'error', 'superseded', 'timeout', 'send-
  *   { phase: 'pending', value, seq, sentAt }  written; waiting for the box
  *   { phase: 'ok', ... }                   confirmed, briefly
  *   { phase: 'stale' | 'error' | 'superseded' | 'timeout' | 'send-failed', ... }
+ *   { phase: 'denied', value, atSend }     the database refused this account,
+ *                                          at the write (atSend: true) or
+ *                                          while waiting on the ack (false)
  */
 export function useVfdCommand(deviceId, enabled) {
-  const path = `commands/${deviceId}`
+  const path = `devices/${deviceId}/commands`
 
   // Subscribed continuously, not only while waiting. It supplies the resting
   // state, and its live seq is what send() below increments from - no read
@@ -82,13 +88,25 @@ export function useVfdCommand(deviceId, enabled) {
         // If a second operator's press landed first, nextSeq will not match
         // what the server actually holds by the time this reaches it, and the
         // database's seq rule (must be exactly one more than the current
-        // value) rejects it - caught below as send-failed, same as any other
-        // write refusal. Pressing again reads the real seq and succeeds.
+        // value) rejects it. Pressing again reads the real seq and succeeds.
+        //
+        // That race and a real access denial both surface as the identical
+        // PERMISSION_DENIED - Firebase does not say which rule clause
+        // rejected the write, only that one did - so isPermissionDenied()
+        // below cannot tell them apart with certainty. Routed to 'denied'
+        // either way, but worded in VfdControl to name both possibilities
+        // rather than confidently blaming access when it might have been a
+        // lost race - a wrong-but-confident message would be worse than an
+        // honestly ambiguous one.
         await update(ref(db, path), { seq: nextSeq, value, issuedAt })
 
         setFlight({ phase: 'pending', value, seq: nextSeq, sentAt: Date.now() })
       } catch (err) {
-        setFlight({ phase: 'send-failed', value, detail: err?.message || String(err) })
+        if (isPermissionDenied(err)) {
+          setFlight({ phase: 'denied', value, atSend: true })
+        } else {
+          setFlight({ phase: 'send-failed', value, detail: err?.message || String(err) })
+        }
       }
     },
     [path, offsetRef],
@@ -100,12 +118,27 @@ export function useVfdCommand(deviceId, enabled) {
 
   // Verdict. Derived from the current node rather than from a stream of events,
   // so an ack that lands between the commit and this render is still caught.
+  //
+  // node.error is checked here too, and unlike the same check in send()'s
+  // catch block, this one is unambiguous: the write that got this flight to
+  // 'pending' already succeeded, so a denial appearing now on the read can
+  // only mean access changed after that point - never a seq race, which
+  // would have been rejected at send time, before 'pending' was ever
+  // reached. Without this check the read would simply stop delivering
+  // anything new, resolveAck would never fire, and the flight would sit
+  // unexplained until the 20s timeout mislabels it as the box being
+  // unreachable, when the real, permanent reason is this account no longer
+  // being allowed to ask.
   useEffect(() => {
     if (flight?.phase !== 'pending') return
+    if (node.error && isPermissionDenied(node.error)) {
+      setFlight({ ...flight, phase: 'denied', atSend: false })
+      return
+    }
     const outcome = resolveAck(node.data?.ack, flight.seq)
     if (!outcome) return
     setFlight({ ...flight, ...outcome })
-  }, [node.data, flight])
+  }, [node.data, node.error, flight])
 
   // Silence. Timed from the send, not from when this effect happened to run.
   useEffect(() => {

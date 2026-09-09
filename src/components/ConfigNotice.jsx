@@ -1,3 +1,5 @@
+import { isPermissionDenied } from '../lib/vfd'
+
 export function ConfigNotice({ missing }) {
   return (
     <div className="notice">
@@ -14,8 +16,11 @@ export function ConfigNotice({ missing }) {
 }
 
 export function ErrorNotice({ title, error }) {
-  const denied = error?.code === 'PERMISSION_DENIED' ||
-    /permission_denied/i.test(error?.message || '')
+  // Not VFD-specific despite the import - this is a general "did the rules
+  // refuse this" check, kept in one place (lib/vfd.js) rather than
+  // duplicated, because the VFD control surface has the more pointed need to
+  // tell a denial apart from a timeout and already needed this exact check.
+  const denied = isPermissionDenied(error)
 
   return (
     <div className="notice">

@@ -2,6 +2,7 @@ import { lazy, Suspense, useMemo, useState } from 'react'
 import { missingConfig } from './firebase'
 import { useAuth } from './hooks/useAuth'
 import { useDeviceAccess } from './hooks/useDeviceAccess'
+import { useIsAdmin } from './hooks/useIsAdmin'
 import { useConnection } from './hooks/useConnection'
 import { useRtdbValue } from './hooks/useRtdbValue'
 import { useCadence } from './hooks/useCadence'
@@ -64,14 +65,22 @@ function Dashboard() {
   const deviceId = (chosenStillValid ? chosenDeviceId : null) || autoDeviceId
   const role = deviceAccess.devices.find((d) => d.id === deviceId)?.role || null
 
+  // Global admin status - independent of `role`, which is per-device. Read
+  // unconditionally (like every other hook here) so this never has to be
+  // called behind a condition; admins/{uid} has a self-read rule for exactly
+  // this reason.
+  const isAdmin = useIsAdmin(realUser ? user : null)
+
   // Whether *this* device's data may be read. Distinct from `realUser`: a
   // real, authorized-somewhere account can still have no device selected yet
   // (the picker is showing) or lack access to this specific one.
   const ready = Boolean(deviceId)
-  // Viewers and operators are treated identically this pass (VFD control is a
-  // separate one) - `role` itself stays available so narrowing this to
-  // `role === 'operator'` later is a one-line change, not a re-plumb.
-  const mayControl = Boolean(role)
+  // Viewer and operator are equivalent for *reading* telemetry (`ready`
+  // above doesn't distinguish them), but not for VFD control: only an
+  // operator, or a global admin regardless of their per-device role, may
+  // command the device. `role` itself stays available so the rest of the
+  // dashboard's viewer/operator equivalence is untouched by this narrowing.
+  const mayControl = role === 'operator' || isAdmin
 
   // `.info/connected` is local to the SDK, so it is watched regardless of auth.
   const connected = useConnection()

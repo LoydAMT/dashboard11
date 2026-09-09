@@ -14,10 +14,10 @@
 //      alone would let anyone who finds it create an account and pass.
 //   2. That account is a viewer or operator of this specific device, or a
 //      global admin. viewers/ and operators/ are admin-provisioned by hand
-//      in the console and never written by the app; treated as equivalent
-//      for now (VFD control is a separate pass), which is why both are
-//      accepted identically below rather than only operators being allowed
-//      to read.
+//      in the console and never written by the app. Viewer and operator are
+//      equivalent for *reading* telemetry - both accepted identically below -
+//      but not for commands/: writing to devices/{deviceId}/commands requires
+//      operator or admin specifically, a viewer cannot. See that block.
 //
 // access/{uid}/{deviceId} is a separate, client-readable index of "which
 // devices does this account see" - it exists only because Firebase cannot
@@ -72,6 +72,60 @@
         "operators": {
           ".read": false,
           ".write": false
+        },
+
+        // The one write-capable subtree, and the odd one out: it drives a
+        // physical VFD through the RH-W. Reading it is no more sensitive
+        // than reading telemetry - it says "here is the last command and
+        // whether the box confirmed it," not something worth hiding from a
+        // viewer - so .read stays viewer-or-operator-or-admin, same as
+        // latest/history/tags/status above. .write is the actual boundary:
+        // moving equipment is what "operator, not viewer" is meant to gate,
+        // so only operator or admin may write here. The validate rules below
+        // are the box's actual protocol contract and are unchanged from
+        // before this node moved here; only the write condition (was
+        // authorized/{uid} from the very first, single-tier auth pass)
+        // changed to match the real per-device model the rest of this file
+        // already uses.
+        "commands": {
+          ".read": "auth != null && auth.token.firebase.sign_in_provider !== 'anonymous' && (root.child('devices/'+$deviceId+'/viewers/'+auth.uid).val() === true || root.child('devices/'+$deviceId+'/operators/'+auth.uid).val() === true || root.child('admins/'+auth.uid).val() === true)",
+          ".write": "auth != null && auth.token.firebase.sign_in_provider !== 'anonymous' && (root.child('devices/'+$deviceId+'/operators/'+auth.uid).val() === true || root.child('admins/'+auth.uid).val() === true)",
+
+          // Closed shape: only these four keys, so a client cannot smuggle an
+          // extra field the box's poller might one day be extended to trust.
+          ".validate": "newData.hasChildren(['seq', 'value', 'issuedAt'])",
+
+          "seq": {
+            // Must increment by exactly one. The box treats an unchanged seq
+            // as "nothing new" and a jump as grounds to distrust the sender,
+            // so a client is only ever allowed to advance it by one step.
+            ".validate": "newData.isNumber() && (data.exists() ? newData.val() === data.val() + 1 : newData.val() === 1)"
+          },
+
+          "value": {
+            ".validate": "newData.val() === 1 || newData.val() === 6"
+          },
+
+          "issuedAt": {
+            // Loosely bounded around the server clock. This is not the box's
+            // 30-second staleness check - that is enforced on the box,
+            // against whatever issuedAt the client sent, and this app must
+            // never second-guess it. This band only catches a wildly wrong
+            // client clock (or a forged timestamp) before it ever reaches
+            // the box.
+            ".validate": "newData.isNumber() && newData.val() <= now + 15000 && newData.val() >= now - 180000"
+          },
+
+          // ack/ is written by the box's Admin SDK, which bypasses every
+          // rule here. The app writes commands with update(), touching only
+          // seq, value and issuedAt, so a legitimate client request never
+          // includes ack at all - an unconditional false is exactly the
+          // right rule, not a stricter "must match" check.
+          "ack": {
+            ".validate": false
+          },
+
+          "$other": { ".validate": false }
         }
       }
     },
@@ -87,59 +141,15 @@
       }
     },
 
-    // Global, rare, grants every device - see the note at the top. Closed to
-    // direct client reads for the same reason viewers/operators are: it is
-    // referenced internally only.
+    // Global, rare, grants every device - see the note at the top. A session
+    // may read its own entry (same reasoning as access/$uid: the client needs
+    // to know "am I an admin" to decide whether to show enabled VFD controls),
+    // but never anyone else's - the full admin list is not something to leak
+    // to every signed-in account.
     "admins": {
-      ".read": false,
-      ".write": false
-    },
-
-    "commands": {
-      "$device": {
-        ".read": "auth != null && auth.token.firebase.sign_in_provider !== 'anonymous' && root.child('authorized/'+auth.uid).val() === true",
-        ".write": "auth != null && auth.token.firebase.sign_in_provider !== 'anonymous' && root.child('authorized/'+auth.uid).val() === true",
-
-        // Closed shape: only these four keys, so a client cannot smuggle an
-        // extra field the box's poller might one day be extended to trust.
-        ".validate": "newData.hasChildren(['seq', 'value', 'issuedAt'])",
-
-        "seq": {
-          // Must increment by exactly one. The box treats an unchanged seq as
-          // "nothing new" and a jump as grounds to distrust the sender, so a
-          // client is only ever allowed to advance it by one step.
-          ".validate": "newData.isNumber() && (data.exists() ? newData.val() === data.val() + 1 : newData.val() === 1)"
-        },
-
-        "value": {
-          ".validate": "newData.val() === 1 || newData.val() === 6"
-        },
-
-        "issuedAt": {
-          // Loosely bounded around the server clock. This is not the box's
-          // 30-second staleness check - that is enforced on the box, against
-          // whatever issuedAt the client sent, and this app must never
-          // second-guess it. This band only catches a wildly wrong client
-          // clock (or a forged timestamp) before it ever reaches the box.
-          ".validate": "newData.isNumber() && newData.val() <= now + 15000 && newData.val() >= now - 180000"
-        },
-
-        // ack/ is written by the box's Admin SDK, which bypasses every rule
-        // here. The app writes commands with update(), touching only seq,
-        // value and issuedAt, so a legitimate client request never includes
-        // ack at all - an unconditional false is exactly the right rule, not
-        // a stricter "must match" check. (An earlier version of this rule
-        // required the client to echo ack back unchanged, on the assumption
-        // that a whole-node write needed to preserve it - that broke the very
-        // first command after a page load, when the client's cache had not
-        // yet received the box's latest ack to echo. Switching the client to
-        // update() removed the need for this rule to be anything other than
-        // a flat no.)
-        "ack": {
-          ".validate": false
-        },
-
-        "$other": { ".validate": false }
+      "$uid": {
+        ".read": "auth != null && auth.uid === $uid",
+        ".write": false
       }
     }
   }
