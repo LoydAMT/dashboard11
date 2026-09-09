@@ -1,8 +1,19 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { ref, query, orderByKey, startAt, endAt, limitToLast, get, onValue } from 'firebase/database'
+import {
+  ref, query, orderByKey, startAt, endAt, limitToFirst, limitToLast, get, onValue,
+} from 'firebase/database'
 import { db } from '../firebase'
 import { floorToMinute, MINUTE } from '../lib/time'
 import { isRawRange } from '../lib/ranges'
+
+// Bounds each raw backfill request. Firebase does not hard-cap how many
+// children a query can return, but asking for a quarter million rows - the
+// longest raw range, at the device's ~1-second push rate - in one response is
+// still the wrong shape for a phone: one huge parse, one huge state update,
+// and nothing rendered until all of it lands. Paging keeps every individual
+// request small regardless of how wide the window is, and lets rows appear as
+// pages arrive instead of all at once at the end.
+const RAW_PAGE_SIZE = 10000
 
 // A tag reporting slower than once a minute can never put two samples in the
 // same minute bucket, so the device does not bother building one — its
@@ -168,20 +179,24 @@ export function useSeriesHistory(tags, range, enabled = true) {
       // reached by a real minuteEpoch, purely to keep the now-sibling raw/
       // node out of it (see ROLLUP_KEY_CEILING above). Raw mode is already
       // reading inside raw/ itself, so it has no such sibling to exclude.
-      const backfillQuery = rawOnly
-        ? query(ref(db, path), orderByKey(), startAt(String(since)))
-        : query(ref(db, path), orderByKey(), startAt(String(since)), endAt(ROLLUP_KEY_CEILING))
       const tailQuery = rawOnly
         ? query(ref(db, path), orderByKey(), limitToLast(2))
         : query(ref(db, path), orderByKey(), endAt(ROLLUP_KEY_CEILING), limitToLast(2))
 
-      // 1. Backfill this tag's window.
-      get(backfillQuery)
-        .then((snap) => {
-          if (sub.cancelled) return
-          absorb(snap.val())
-        })
-        .catch(fail)
+      // 1. Backfill this tag's window. Rollups are small even at 7 days
+      // (10,080 rows) and fetched in one shot; raw can be a quarter million
+      // rows at the 3-day ceiling and is paginated instead (see
+      // fetchRawBackfill / RAW_PAGE_SIZE above).
+      if (rawOnly) {
+        fetchRawBackfill({ path, since, sub, absorb, fail })
+      } else {
+        get(query(ref(db, path), orderByKey(), startAt(String(since)), endAt(ROLLUP_KEY_CEILING)))
+          .then((snap) => {
+            if (sub.cancelled) return
+            absorb(snap.val())
+          })
+          .catch(fail)
+      }
 
       // 2. Follow its leading edge.
       sub.unsubscribe = onValue(
@@ -234,6 +249,54 @@ export function useSeriesHistory(tags, range, enabled = true) {
       loading: keyList.length > 0 && ready < keyList.length,
     }
   }, [keysId, store, range])
+}
+
+/**
+ * Walk history/{tag}/raw/ from `since` to the present in RAW_PAGE_SIZE
+ * chunks, feeding each page to `absorb` as it arrives rather than waiting for
+ * the whole window.
+ *
+ * Cursor-based, not offset-based: each page's start is one past the newest
+ * key the previous page returned, so a page can never be requested until the
+ * one before it is known - correct over a fast/cheap-but-serial round trip,
+ * not a set of ranges guessed up front and fetched in parallel. Given that
+ * device pushes are not perfectly even (a reconnect, a slow cycle), guessing
+ * time-based page boundaries in advance risks either re-fetching a stretch
+ * that was already covered or, worse, skipping one that was not.
+ */
+async function fetchRawBackfill({ path, since, sub, absorb, fail }) {
+  let cursor = since
+
+  for (;;) {
+    if (sub.cancelled) return
+
+    let snap
+    try {
+      snap = await get(
+        query(ref(db, path), orderByKey(), startAt(String(cursor)), limitToFirst(RAW_PAGE_SIZE)),
+      )
+    } catch (error) {
+      fail(error)
+      return
+    }
+    if (sub.cancelled) return
+
+    const page = snap.val()
+    const keys = page ? Object.keys(page) : []
+    absorb(page)
+
+    // Fewer than a full page means this was the last one - whatever is newest
+    // in raw/ right now has been reached, and the live-tail listener picks up
+    // anything pushed after this point.
+    if (keys.length < RAW_PAGE_SIZE) return
+
+    // The largest key, not `keys[keys.length - 1]`: these timestamps exceed
+    // 2^32, so they do not qualify for JS's special ascending-integer key
+    // order, and a plain object's key order is otherwise just insertion
+    // order - not guaranteed to already be sorted.
+    const lastKey = keys.reduce((max, k) => (Number(k) > Number(max) ? k : max), keys[0])
+    cursor = Number(lastKey) + 1
+  }
 }
 
 const numOr = (v, fallback) => (typeof v === 'number' && Number.isFinite(v) ? v : fallback)
