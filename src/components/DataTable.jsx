@@ -3,6 +3,7 @@ import { formatValue } from '../lib/tags'
 import { formatLocal } from '../lib/time'
 import { exportHeader, exportCell } from '../lib/table'
 import { saveBlob, buildCsv, exportFilename } from '../lib/download'
+import { isRawRange } from '../lib/ranges'
 
 // Rows the browser will actually paint. A 7-day window is ten thousand minutes
 // and ten thousand table rows is a locked-up phone, so the screen shows the
@@ -39,7 +40,13 @@ export function DataTable({
   // rollup" - so it is pinned above the historical rows instead of folded
   // into one, with everything but its own `now` cell left blank rather than
   // guessed from an aggregate that means something different.
+  //
+  // Skipped entirely in a raw range: there is no `now` column there (see
+  // buildTable), and a raw table's own top row is already close to live, so a
+  // separate pinned indicator would only repeat it.
+  const raw = isRawRange(range)
   const nowRow = useMemo(() => {
+    if (raw) return null
     const cells = {}
     let hasAny = false
     for (const g of groups) {
@@ -47,7 +54,7 @@ export function DataTable({
       cells[`${g.key}:now`] = g.tag.value
     }
     return hasAny ? { cells } : null
-  }, [groups])
+  }, [groups, raw])
 
   const exportAs = async (kind) => {
     if (!rows.length) return

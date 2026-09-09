@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { ref, query, orderByKey, startAt, endAt, limitToLast, get, onValue } from 'firebase/database'
 import { db } from '../firebase'
 import { floorToMinute, MINUTE } from '../lib/time'
+import { isRawRange } from '../lib/ranges'
 
 // A tag reporting slower than once a minute can never put two samples in the
 // same minute bucket, so the device does not bother building one — its
@@ -35,20 +36,28 @@ const ROLLUP_KEY_CEILING = '9999999999999'
  * Rows are cached in the units RTDB holds. The merge onto a common time grid
  * happens downstream, in lib/series.js.
  *
- * A tag is read from one of two places, decided by its own interval:
+ * A tag is read from one of two places, decided by either of two things:
  *   - history/{key}/{minuteEpoch}  {min,avg,max,n} rollups, for a tag fast
  *     enough that a minute can hold more than one sample.
- *   - history/{key}/raw/{ts}       a bare number per sample, for a tag that
- *     never gets a rollup at all (see usesRawOnly above). Each raw sample
- *     becomes its own row with min = avg = max = that value and n = 1, which
- *     is exactly the shape a single-sample minute would have had - so
- *     everything downstream (the chart, the table, CSV/XLSX export) reads it
- *     without knowing the difference.
+ *   - history/{key}/raw/{ts}       a bare number per sample, read whenever
+ *     either the tag itself never gets a rollup (see usesRawOnly - a 12-hour
+ *     accumulator, always) or the *range* on screen asks for one (see
+ *     lib/ranges.js's RAW_RANGES - a deliberately short recent window, for
+ *     any tag, when someone wants to see actual pushes rather than rollups).
+ *     Each raw sample becomes its own row with min = avg = max = that value
+ *     and n = 1, which is exactly the shape a single-sample minute would have
+ *     had - so everything downstream (the chart, the table, CSV/XLSX export)
+ *     reads it without knowing the difference.
  * Both live under history/{key} as siblings now, which is why the rollup
  * queries below carry an explicit endAt: without it, orderByKey with no upper
  * bound would sweep the raw/ subtree in as well, on every backfill and on
  * every live-tail update raw/ receives - for a once-a-second tag, that is a
  * refire on every single sample instead of once a minute.
+ *
+ * Cache and subscription identity is keyed on the range's *id*, not its `ms`
+ * - a raw range and a rollup range can share the same duration (raw-1h and
+ * 1h are both an hour) while needing completely different data, and `ms`
+ * alone cannot tell them apart.
  */
 export function useSeriesHistory(tags, range, enabled = true) {
   // Rows are state, not a ref: they are read while rendering, and a ref read
@@ -85,7 +94,7 @@ export function useSeriesHistory(tags, range, enabled = true) {
     // already in hand. The rows they gathered stay cached under their own
     // window key.
     for (const [key, sub] of subs.current) {
-      if (!wanted.has(key) || sub.rangeMs !== range.ms) {
+      if (!wanted.has(key) || sub.rangeId !== range.id) {
         sub.cancelled = true
         sub.unsubscribe()
         subs.current.delete(key)
@@ -95,7 +104,7 @@ export function useSeriesHistory(tags, range, enabled = true) {
     for (const key of keyList) {
       if (subs.current.has(key)) continue
 
-      const sub = { rangeMs: range.ms, cancelled: false, unsubscribe: () => {} }
+      const sub = { rangeId: range.id, cancelled: false, unsubscribe: () => {} }
       subs.current.set(key, sub)
 
       // Decided once, at the moment this subscription is (re)established -
@@ -103,10 +112,10 @@ export function useSeriesHistory(tags, range, enabled = true) {
       // config change on the device is picked up the next time this tag's
       // subscription is touched, without needing its own reactivity.
       const tag = tagsRef.current.find((t) => t.key === key)
-      const rawOnly = usesRawOnly(tag?.intervalMs)
+      const rawOnly = usesRawOnly(tag?.intervalMs) || isRawRange(range)
 
       const path = rawOnly ? `history/${key}/raw` : `history/${key}`
-      const slot = `${key}@${range.ms}`
+      const slot = `${key}@${range.id}`
       const since = floorToMinute(Date.now() - range.ms)
 
       // Keyed by timestamp so the backfill and the live tail merge without
@@ -187,7 +196,11 @@ export function useSeriesHistory(tags, range, enabled = true) {
 
     // No cleanup returned on purpose: this effect reconciles subscriptions, it
     // does not own them. Ownership ends at unmount, handled once below.
-  }, [keysId, range.ms])
+    //
+    // Depends on `range` itself, not just `range.id`: both `.id` and `.ms` are
+    // read above, and range objects are the stable module constants from
+    // lib/ranges.js, so this re-runs exactly when the id would have anyway.
+  }, [keysId, range])
 
   useEffect(() => {
     const active = subs.current
@@ -207,7 +220,7 @@ export function useSeriesHistory(tags, range, enabled = true) {
     let ready = 0
 
     for (const key of keyList) {
-      const entry = store[`${key}@${range.ms}`]
+      const entry = store[`${key}@${range.id}`]
       byKey[key] = entry?.rows || []
       if (entry?.error && !error) error = entry.error
       if (entry) ready += 1
@@ -220,7 +233,7 @@ export function useSeriesHistory(tags, range, enabled = true) {
       // invites reading a trend that has not arrived as one that is flat.
       loading: keyList.length > 0 && ready < keyList.length,
     }
-  }, [keysId, store, range.ms])
+  }, [keysId, store, range])
 }
 
 const numOr = (v, fallback) => (typeof v === 'number' && Number.isFinite(v) ? v : fallback)

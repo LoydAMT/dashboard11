@@ -7,7 +7,11 @@ import { formatValue, displayUnit } from '../lib/tags'
 import { computeDomain, axisTickFormatter, axisTicks } from '../lib/domain'
 
 /**
- * One-minute rollups for one or several tags over the selected window.
+ * One-minute rollups for one or several tags over the selected window - or,
+ * under a raw range, the individual pushes in a much shorter one. Both arrive
+ * as the same {t, min, avg, max} row shape (see useSeriesHistory), so nothing
+ * here has to know which one it is drawing except for the `raw` flag, used
+ * only to word the empty state honestly.
  *
  * With a single tag the mean is the line and the min/max of everything folded
  * into each plotted point is the band behind it — without that band,
@@ -20,7 +24,7 @@ import { computeDomain, axisTickFormatter, axisTicks } from '../lib/domain'
  * below 3:1 against the panel surface, so colour alone is never asked to carry
  * it.
  */
-export function HistoryChart({ tags, colors, data, rangeMs, indexed, loading, error }) {
+export function HistoryChart({ tags, colors, data, rangeMs, raw, indexed, loading, error }) {
   const single = tags.length === 1 ? tags[0] : null
   const isBool = single?.dataType === 'bool'
 
@@ -55,7 +59,9 @@ export function HistoryChart({ tags, colors, data, rangeMs, indexed, loading, er
         <div className="placeholder">
           No history in this range.
           <br />
-          Rollups appear a minute or so after the pusher starts writing.
+          {raw
+            ? 'A raw range only holds what was pushed inside this short window — try a wider one.'
+            : 'Rollups appear a minute or so after the pusher starts writing.'}
         </div>
       </div>
     )

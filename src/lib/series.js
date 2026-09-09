@@ -19,7 +19,10 @@ const num = (v) => (typeof v === 'number' && Number.isFinite(v) ? v : null)
  */
 export function mergeSeries({ byKey, keys, range, nowMs, indexed = false }) {
   const cutoff = nowMs - range.ms
-  const bucketMs = Math.max(MINUTE, Math.round(range.ms / Math.max(range.points, 1)))
+  // A raw range sets its own, much finer floor (see lib/ranges.js) - without
+  // it, a 5-minute raw window would still get binned into 1-minute buckets,
+  // which is most of the detail raw mode exists to show.
+  const bucketMs = Math.max(range.bucketFloorMs ?? MINUTE, Math.round(range.ms / Math.max(range.points, 1)))
 
   const buckets = new Map()   // bucketStart -> { t, vals: Map(key -> acc) }
   const extent = new Map()    // key -> { min, max } across the whole window

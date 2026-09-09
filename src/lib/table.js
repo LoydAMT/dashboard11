@@ -1,28 +1,37 @@
 // The same window the chart draws, laid out as a grid instead of a picture.
 //
-// Deliberately built from the *raw* one-minute rollups in `byKey`, not from the
+// Deliberately built from the *unaggregated* rows in `byKey`, not from the
 // merged rows lib/series.js hands the chart. Those are downsampled onto a
 // render budget — the right trade for pixels, the wrong one for a table someone
 // is about to read a number off or hand to a spreadsheet. A table asked to show
-// "all data" has to mean every minute the device published.
+// "all data" has to mean every minute the device published - or, in a raw
+// range, every individual push.
 
 import { displayUnit } from './tags'
+import { isRawRange } from './ranges'
 
-const FIELD_LABEL = { min: 'min', avg: 'mean', max: 'max', now: 'now' }
+const FIELD_LABEL = { min: 'min', avg: 'mean', max: 'max', now: 'now', value: 'value' }
 
 /**
  * Column definitions and time-aligned rows for the tags currently on screen.
  *
- * Rows are the *union* of every minute any tag reported, ascending. A tag that
- * started later, or dropped out for an hour, leaves blanks rather than shifting
- * the others up a row — the whole point of a shared time column is that a
- * reading on one line happened at the same instant as its neighbours.
+ * Rows are the *union* of every timestamp any tag reported, ascending. A tag
+ * that started later, or dropped out for a while, leaves blanks rather than
+ * shifting the others up a row — the whole point of a shared time column is
+ * that a reading on one line happened at the same instant as its neighbours.
+ *
+ * A raw range (see lib/ranges.js) changes the shape entirely, not just the
+ * source: there is nothing to aggregate over a single reading, so min/mean/max
+ * collapse to one `value` field and the live `now` column drops out too — a
+ * raw table is already about as current as a number can be, one row at a
+ * time, so a separate "current" indicator would just repeat the top row.
  *
  * @param byKey { [tagKey]: [{ t, min, avg, max, n }] } as cached by useSeriesHistory
  * @param tags  built tags, in display order
  */
 export function buildTable({ byKey, tags, range, nowMs }) {
   const cutoff = nowMs - range.ms
+  const raw = isRawRange(range)
 
   const columns = [{ id: 't', label: 'Time', kind: 'time' }]
   const groups = []
@@ -30,18 +39,20 @@ export function buildTable({ byKey, tags, range, nowMs }) {
   for (const tag of tags) {
     // A mean of a boolean is 0.5 as often as not, and min/max of one is just
     // "did it ever change". One state column says more than three numbers.
-    // `now` is appended to either shape: it is not an aggregate of the window
-    // at all, just the tag's current live value, and belongs next to the
-    // rollups regardless of how many of those a tag gets.
-    const fields = tag.dataType === 'bool' || tag.dataType === 'text'
-      ? ['avg', 'now']
-      : ['min', 'avg', 'max', 'now']
+    // `now` is appended to the rollup shapes: it is not an aggregate of the
+    // window at all, just the tag's current live value, and belongs next to
+    // the rollups regardless of how many of those a tag gets.
+    const fields = raw
+      ? ['value']
+      : tag.dataType === 'bool' || tag.dataType === 'text'
+        ? ['avg', 'now']
+        : ['min', 'avg', 'max', 'now']
     const unit = displayUnit(tag)
 
     for (const field of fields) {
       columns.push({
         id: `${tag.key}:${field}`,
-        label: `${tag.name} ${FIELD_LABEL[field]}`,
+        label: raw ? tag.name : `${tag.name} ${FIELD_LABEL[field]}`,
         short: FIELD_LABEL[field],
         unit,
         field,
@@ -66,11 +77,18 @@ export function buildTable({ byKey, tags, range, nowMs }) {
         byTime.set(r.t, cells)
       }
 
-      // A rollup missing its envelope still has a mean; the mean stands in for
-      // both bounds rather than the row losing the reading altogether.
-      cells[`${tag.key}:avg`] = r.avg
-      cells[`${tag.key}:min`] = numOr(r.min, r.avg)
-      cells[`${tag.key}:max`] = numOr(r.max, r.avg)
+      if (raw) {
+        // A raw row already has min = avg = max = the one reading it was
+        // built from (see useSeriesHistory) - avg is that reading, nothing
+        // aggregated about it.
+        cells[`${tag.key}:value`] = r.avg
+      } else {
+        // A rollup missing its envelope still has a mean; the mean stands in
+        // for both bounds rather than the row losing the reading altogether.
+        cells[`${tag.key}:avg`] = r.avg
+        cells[`${tag.key}:min`] = numOr(r.min, r.avg)
+        cells[`${tag.key}:max`] = numOr(r.max, r.avg)
+      }
     }
   }
 

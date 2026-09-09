@@ -461,6 +461,30 @@ body {
   box-shadow: 0 1px 2px rgba(16, 20, 28, .12);
 }
 
+/* A visibly different pill for the raw-range group, so it doesn't read as
+   five more buttons in the same list as the rollup ranges - a different
+   background tint plus its own caption, rather than relying on the button
+   labels alone to carry the distinction. */
+.ranges-raw {
+  background: var(--stale-bg);
+  gap: 6px;
+  padding: 3px 8px 3px 3px;
+}
+
+.ranges-raw-label {
+  font-size: .72rem;
+  font-weight: 650;
+  color: var(--stale);
+  text-transform: uppercase;
+  letter-spacing: .03em;
+  padding: 0 2px 0 6px;
+  white-space: nowrap;
+}
+
+.ranges-raw .range-active {
+  color: var(--stale);
+}
+
 .chart-wrap { width: 100%; height: 300px; }
 
 @media (max-width: 560px) {

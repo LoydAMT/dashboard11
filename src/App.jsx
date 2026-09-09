@@ -10,7 +10,7 @@ import { systemState, stalenessThreshold, tagStalenessThreshold, isStaleLevel } 
 import { discoverTagKeys, buildTag, formatValue, displayUnit } from './lib/tags'
 import { colorForIndex, MAX_SERIES } from './lib/palette'
 import { mergeSeries } from './lib/series'
-import { rangeById, DEFAULT_RANGE } from './lib/ranges'
+import { rangeById, DEFAULT_RANGE, isRawRange } from './lib/ranges'
 import { buildTable } from './lib/table'
 import { StatusBanner } from './components/StatusBanner'
 import { TagCard } from './components/TagCard'
@@ -94,6 +94,7 @@ function Dashboard() {
   const [view, setView] = useState('chart')
   const [rangeId, setRangeId] = useState(DEFAULT_RANGE.id)
   const range = rangeById(rangeId)
+  const rawView = isRawRange(range)
 
   // Derived rather than stored, for the same reason the single selection was:
   // the chart defaults to the first tag until someone chooses, and recovers by
@@ -236,12 +237,18 @@ function Dashboard() {
                 {single ? single.name : `${visibleTags.length} trends`}
               </div>
               <div className="panel-sub">
-                {view === 'table'
-                  ? 'Every one-minute rollup in the window, newest first'
-                  : single
-                    ? (single.description ||
-                       (single.unit ? `Unit: ${single.unit}` : 'One-minute rollups'))
-                    : 'One-minute rollups · tap a card or a legend entry to add or remove a trend'}
+                {rawView
+                  ? (view === 'table'
+                      ? 'Every raw reading in the window, newest first — unaggregated'
+                      : single
+                        ? (single.description || 'Raw readings, unaggregated')
+                        : 'Raw readings, unaggregated · tap a card or a legend entry to add or remove a trend')
+                  : (view === 'table'
+                      ? 'Every one-minute rollup in the window, newest first'
+                      : single
+                        ? (single.description ||
+                           (single.unit ? `Unit: ${single.unit}` : 'One-minute rollups'))
+                        : 'One-minute rollups · tap a card or a legend entry to add or remove a trend')}
               </div>
             </div>
 
@@ -329,6 +336,7 @@ function Dashboard() {
                 colors={colors}
                 data={merged.rows}
                 rangeMs={range.ms}
+                raw={rawView}
                 indexed={indexedNow}
                 loading={history.loading}
                 error={history.error}
