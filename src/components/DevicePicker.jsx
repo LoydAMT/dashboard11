@@ -5,9 +5,9 @@ import { useDeviceName } from '../hooks/useDeviceName'
  * case (exactly one) skips this entirely and goes straight to the dashboard.
  *
  * A custom name (set at /naming, shared with every signed-in account - see
- * hooks/useDeviceName.js) is shown as the primary label, with the raw id
- * underneath whenever it differs, so a renamed device is still identifiable
- * to anyone comparing notes by its real id.
+ * hooks/useDeviceName.js) fully replaces the raw id here: once a device is
+ * renamed the id does not appear anywhere in the UI. The id still lives on
+ * in every path, rule and export filename, just not on screen.
  */
 export function DevicePicker({ devices, onSelect }) {
   return (
@@ -29,7 +29,6 @@ export function DevicePicker({ devices, onSelect }) {
 // hook calls happen in the same order every render.
 function DevicePickerItem({ deviceId, onSelect }) {
   const { name } = useDeviceName(deviceId)
-  const renamed = name !== deviceId
 
   return (
     <button
@@ -38,7 +37,6 @@ function DevicePickerItem({ deviceId, onSelect }) {
       onClick={() => onSelect(deviceId)}
     >
       {name}
-      {renamed && <span className="device-picker-item-id"> ({deviceId})</span>}
     </button>
   )
 }

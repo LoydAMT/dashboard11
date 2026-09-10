@@ -634,11 +634,6 @@ body {
 .device-picker-item:hover { border-color: var(--accent); }
 .device-picker-item:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 
-.device-picker-item-id {
-  font-weight: 500;
-  color: var(--text-faint);
-}
-
 /* ---------- /naming ---------- */
 
 .naming-list {
