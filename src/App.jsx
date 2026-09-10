@@ -3,6 +3,7 @@ import { missingConfig } from './firebase'
 import { useAuth } from './hooks/useAuth'
 import { useDeviceAccess } from './hooks/useDeviceAccess'
 import { useIsAdmin } from './hooks/useIsAdmin'
+import { useDeviceName } from './hooks/useDeviceName'
 import { useConnection } from './hooks/useConnection'
 import { useRtdbValue } from './hooks/useRtdbValue'
 import { useCadence } from './hooks/useCadence'
@@ -23,6 +24,7 @@ import { DataTable } from './components/DataTable'
 import { VfdControl } from './components/VfdControl'
 import { SignIn } from './components/SignIn'
 import { DevicePicker } from './components/DevicePicker'
+import { NamingPage } from './components/NamingPage'
 import { signOutUser } from './auth'
 
 // Recharts is by far the heaviest thing in the bundle and none of it is needed
@@ -42,6 +44,14 @@ export default function App() {
         <ConfigNotice missing={missingConfig} />
       </div>
     )
+  }
+  // No router for one page: this is a real browser navigation (typed URL or
+  // a plain <a> tag, never a client-side push), so reading the path once at
+  // the top is enough - it is fixed for the life of this mount. Hosting's
+  // rewrite already sends every path to index.html, so this is the only
+  // place "/naming" needs to be recognised at all.
+  if (window.location.pathname === '/naming') {
+    return <NamingPage />
   }
   return <Dashboard />
 }
@@ -70,6 +80,11 @@ function Dashboard() {
   // called behind a condition; admins/{uid} has a self-read rule for exactly
   // this reason.
   const isAdmin = useIsAdmin(realUser ? user : null)
+
+  // The friendly name for whichever device is selected, if one has been set
+  // at /naming - falls back to the raw id on its own, so every call site
+  // below can use it unconditionally.
+  const { name: deviceName } = useDeviceName(deviceId)
 
   // Whether *this* device's data may be read. Distinct from `realUser`: a
   // real, authorized-somewhere account can still have no device selected yet
@@ -223,7 +238,7 @@ function Dashboard() {
   return (
     <div className="app">
       <Masthead
-        deviceId={ready ? deviceId : null}
+        deviceName={ready ? deviceName : null}
         periodMs={periodMs}
         email={ready ? user?.email : null}
         onSignOut={signOutUser}
@@ -436,7 +451,7 @@ function Dashboard() {
         )}
   
         <footer className="footnote">
-          Values are one-minute rollups from {deviceId}; timestamps shown in your
+          Values are one-minute rollups from {deviceName}; timestamps shown in your
           local time. Staleness threshold {Math.round(thresholdMs / 1000)}s, derived
           from an observed publish interval of {formatInterval(periodMs)}.
           {' '}History is loaded only for the trends on the chart, up to {MAX_SERIES} at once.
@@ -480,7 +495,7 @@ function Stat({ label, tag, value, live = false }) {
   )
 }
 
-function Masthead({ deviceId, periodMs, email, onSignOut }) {
+function Masthead({ deviceName, periodMs, email, onSignOut }) {
   return (
     <header className="masthead">
       <div className="masthead-brand">
@@ -493,9 +508,9 @@ function Masthead({ deviceId, periodMs, email, onSignOut }) {
         </div>
       </div>
       <div className="masthead-right">
-        {deviceId && (
+        {deviceName && (
           <span className="device">
-            {deviceId}
+            {deviceName}
             {periodMs ? ` · every ${formatInterval(periodMs)}` : ''}
           </span>
         )}

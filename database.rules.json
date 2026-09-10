@@ -151,6 +151,30 @@
         ".read": "auth != null && auth.uid === $uid",
         ".write": false
       }
+    },
+
+    // A display-name override for a device, shared with everyone who can see
+    // it - deliberately not device data itself (devices/{deviceId} is
+    // untouched by this) and not per-browser: this exists so a rename shows
+    // up for every signed-in account, not just the one who set it. Read
+    // follows the same viewer-or-operator-or-admin access as the device
+    // itself - knowing its friendly name is no more sensitive than seeing
+    // its telemetry. Write is intentionally not a role in the access model
+    // at all: one specific account, hardcoded, because this is a personal
+    // labeling tool for that account rather than a capability meant to be
+    // handed to operators or admins generally. (Matches the client-side gate
+    // in components/NamingPage.jsx - that check is for the page's UI, this
+    // rule is the actual boundary.)
+    "naming": {
+      "$deviceId": {
+        ".read": "auth != null && auth.token.firebase.sign_in_provider !== 'anonymous' && (root.child('devices/'+$deviceId+'/viewers/'+auth.uid).val() === true || root.child('devices/'+$deviceId+'/operators/'+auth.uid).val() === true || root.child('admins/'+auth.uid).val() === true)",
+        ".write": "auth.uid === 'ROz1Xq3b4yReAPkLNGJCFbj6inV2'",
+        // Either a real, short label, or the key is being removed entirely
+        // (clearing the override, back to showing the raw id) - an empty
+        // string is deliberately not a valid stored value, so "cleared" and
+        // "set to nothing" can never be ambiguous.
+        ".validate": "!newData.exists() || (newData.isString() && newData.val().length > 0 && newData.val().length <= 60)"
+      }
     }
   }
 }

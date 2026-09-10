@@ -3,6 +3,7 @@ import { useVfdCommand } from '../hooks/useVfdCommand'
 import { useNow } from '../hooks/useNow'
 import { formatAgo, formatLocal } from '../lib/time'
 import { POLL_MS, VFD_OFF, VFD_ON, pastFor, stateFor, verbFor } from '../lib/vfd'
+import { useDeviceName } from '../hooks/useDeviceName'
 
 // Said once in the panel and again in the dialog. It is the sort of thing that
 // gets skimmed exactly when it matters, so it is not tucked into a tooltip.
@@ -25,6 +26,7 @@ export function VfdControl({ deviceId, mayControl, authResolved }) {
   // write, further down.
   const { known, flight, busy, settled, send, dismiss, loading, error } =
     useVfdCommand(deviceId, true)
+  const { name: deviceName } = useDeviceName(deviceId)
 
   const [confirming, setConfirming] = useState(null)
   const dialogRef = useRef(null)
@@ -47,7 +49,7 @@ export function VfdControl({ deviceId, mayControl, authResolved }) {
     <section className="panel vfd" aria-labelledby="vfd-heading">
       <div className="panel-head">
         <div>
-          <div className="panel-title" id="vfd-heading">VFD control · {deviceId}</div>
+          <div className="panel-title" id="vfd-heading">VFD control · {deviceName}</div>
           <div className="panel-sub">{NOT_A_READBACK}</div>
         </div>
       </div>
@@ -124,7 +126,7 @@ export function VfdControl({ deviceId, mayControl, authResolved }) {
         {confirming != null && (
           <ConfirmBody
             value={confirming}
-            deviceId={deviceId}
+            deviceId={deviceName}
             known={known}
             onCancel={() => setConfirming(null)}
             onConfirm={() => {
