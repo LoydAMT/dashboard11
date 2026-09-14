@@ -1183,6 +1183,32 @@ body {
   .export-btn { flex: 1; }
 }
 
+/* ---------- kWh history ---------- */
+
+/* Amber, not red: a meter reset is a real, expected event (a replaced meter,
+   a counter rollover), not a failure - the same distinction --stale already
+   draws for a quiet tag versus a down link. */
+.stat-anomaly dd { color: var(--stale); }
+
+/* Selector shape matches .row-now above (same .data-table tbody tr.<class>
+   chain) on purpose: .col-time here needs to tie the zebra striping rule's
+   specificity exactly so source order - this comes after it - is what
+   decides the winner, the same trick that rule already relies on. A plain
+   .kwh-row-anomaly .col-time would lose to striping on every even row. */
+.data-table tbody tr.kwh-row-anomaly td,
+.data-table tbody tr.kwh-row-anomaly .col-time { background: var(--stale-bg); }
+
+.kwh-anomaly-badge {
+  display: inline-block;
+  font-size: .72rem;
+  font-weight: 650;
+  color: var(--stale);
+  background: var(--stale-bg);
+  border-radius: 6px;
+  padding: 2px 7px;
+  cursor: help;
+}
+
 /* ---------- phone: two cards to a row ---------- */
 
 /* auto-fit with a 172px floor drops to a single column on a 360px screen, which

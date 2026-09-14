@@ -15,12 +15,14 @@ import { colorForIndex, MAX_SERIES } from './lib/palette'
 import { mergeSeries } from './lib/series'
 import { rangeById, DEFAULT_RANGE, isRawRange } from './lib/ranges'
 import { buildTable } from './lib/table'
+import { KWH_TAG_KEY } from './lib/kwh'
 import { StatusBanner } from './components/StatusBanner'
 import { TagCard } from './components/TagCard'
 import { RangePicker } from './components/RangePicker'
 import { ChartLegend } from './components/ChartLegend'
 import { ConfigNotice, ErrorNotice } from './components/ConfigNotice'
 import { DataTable } from './components/DataTable'
+import { KwhHistory } from './components/KwhHistory'
 import { VfdControl } from './components/VfdControl'
 import { SignIn } from './components/SignIn'
 import { DevicePicker } from './components/DevicePicker'
@@ -227,6 +229,13 @@ function Dashboard() {
       : EMPTY_TABLE),
     [view, history.byKey, visibleTags, range, coarseNow],
   )
+
+  // Found by its actual RTDB key, not by display name - a tag can be
+  // renamed in tags/{key}/name without moving the history it is stored
+  // under. Independent of visibleKeys/pickedKeys: this panel is not one of
+  // the trends someone toggles onto the shared chart, it exists whether or
+  // not kWh is currently shown there.
+  const kwhTag = tagList.find((t) => t.key === KWH_TAG_KEY) || null
 
   const dataError = latest.error || tags.error || status.error
 
@@ -449,7 +458,9 @@ function Dashboard() {
             />
           </section>
         )}
-  
+
+        {kwhTag && <KwhHistory deviceId={deviceId} tag={kwhTag} />}
+
         <footer className="footnote">
           Values are one-minute rollups from {deviceName}; timestamps shown in your
           local time. Staleness threshold {Math.round(thresholdMs / 1000)}s, derived
