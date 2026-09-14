@@ -5,6 +5,7 @@ import {
 import { db } from '../firebase'
 import { floorToMinute, MINUTE } from '../lib/time'
 import { isRawRange } from '../lib/ranges'
+import { KWH_TAG_KEY } from '../lib/kwh'
 
 // Bounds each raw backfill request. Firebase does not hard-cap how many
 // children a query can return, but asking for a quarter million rows - the
@@ -126,7 +127,12 @@ export function useSeriesHistory(tags, range, deviceId, enabled = true) {
       // config change on the device is picked up the next time this tag's
       // subscription is touched, without needing its own reactivity.
       const tag = tagsRef.current.find((t) => t.key === key)
-      const rawOnly = usesRawOnly(tag?.intervalMs) || isRawRange(range)
+      // kWh forces raw regardless of what intervalMs says: it is inherently
+      // a 12-hourly accumulator with no rollups (see lib/kwh.js), and this
+      // panel showed nothing whenever the device's tags/kWh metadata did not
+      // carry an intervalMs >= ROLLUP_CEILING_MS to make usesRawOnly agree -
+      // the rollup path it fell back to querying has no data to find, ever.
+      const rawOnly = usesRawOnly(tag?.intervalMs) || isRawRange(range) || key === KWH_TAG_KEY
 
       const devicePath = `devices/${deviceId}/history/${key}`
       const path = rawOnly ? `${devicePath}/raw` : devicePath

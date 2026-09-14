@@ -189,6 +189,13 @@ function Dashboard() {
 
   const single = visibleTags.length === 1 ? visibleTags[0] : null
 
+  // kWh is always fetched raw regardless of the selected range (see
+  // useSeriesHistory) - shown alone, the panel's copy and chart empty-state
+  // should say so too, rather than claiming "one-minute rollups" for data
+  // that was never rolled up.
+  const kwhForcedRaw = single?.key === KWH_TAG_KEY
+  const effectiveRawView = rawView || kwhForcedRaw
+
   // Indexing is only meaningful across several trends, and its control is only
   // offered then — so it must not survive being hidden down to one series, or
   // the axis would stay in percent with no visible way back to real values.
@@ -341,7 +348,7 @@ function Dashboard() {
                   {single ? single.name : `${visibleTags.length} trends`}
                 </div>
                 <div className="panel-sub">
-                  {rawView
+                  {effectiveRawView
                     ? (view === 'table'
                         ? 'Every raw reading in the window, newest first — unaggregated'
                         : single
@@ -440,7 +447,7 @@ function Dashboard() {
                   colors={colors}
                   data={merged.rows}
                   rangeMs={range.ms}
-                  raw={rawView}
+                  raw={effectiveRawView}
                   indexed={indexedNow}
                   loading={history.loading}
                   error={history.error}
