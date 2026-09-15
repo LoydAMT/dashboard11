@@ -139,9 +139,19 @@ export function useSeriesHistory(tags, range, deviceId, enabled = true) {
       const slot = `${deviceId}:${key}@${range.id}`
       const since = floorToMinute(Date.now() - range.ms)
 
-      // Keyed by timestamp so the backfill and the live tail merge without
-      // duplicating whichever point both of them see.
-      const rowsByTime = new Map()
+      // Resume from what a previous subscription for this exact
+      // device+tag+window already fetched, instead of redownloading it -
+      // `store` outlives the subscription that populated it (only the
+      // listener gets torn down when a tag is hidden, the range flips away
+      // and back, or a device switch comes back to one already visited),
+      // but until now nothing here ever checked it before backfilling.
+      // History is append-only, so anything already cached is still good;
+      // only the gap since the newest cached point needs a fresh fetch.
+      const cachedRows = store[slot]?.rows
+      const rowsByTime = new Map((cachedRows || []).map((r) => [r.t, r]))
+      const backfillSince = cachedRows?.length
+        ? Math.max(since, cachedRows[cachedRows.length - 1].t + 1)
+        : since
 
       // Rollups arrive as {min,avg,max,n} objects; raw samples as a bare
       // number. Normalising both to the same row shape here is what lets
@@ -193,14 +203,16 @@ export function useSeriesHistory(tags, range, deviceId, enabled = true) {
         ? query(ref(db, path), orderByKey(), limitToLast(2))
         : query(ref(db, path), orderByKey(), endAt(ROLLUP_KEY_CEILING), limitToLast(2))
 
-      // 1. Backfill this tag's window. Rollups are small even at 7 days
+      // 1. Backfill this tag's window, from `backfillSince` rather than
+      // `since` so a resumed subscription only asks for what it does not
+      // already have cached (see above). Rollups are small even at 7 days
       // (10,080 rows) and fetched in one shot; raw can be a quarter million
       // rows at the 3-day ceiling and is paginated instead (see
       // fetchRawBackfill / RAW_PAGE_SIZE above).
       if (rawOnly) {
-        fetchRawBackfill({ path, since, sub, absorb, fail })
+        fetchRawBackfill({ path, since: backfillSince, sub, absorb, fail })
       } else {
-        get(query(ref(db, path), orderByKey(), startAt(String(since)), endAt(ROLLUP_KEY_CEILING)))
+        get(query(ref(db, path), orderByKey(), startAt(String(backfillSince)), endAt(ROLLUP_KEY_CEILING)))
           .then((snap) => {
             if (sub.cancelled) return
             absorb(snap.val())
@@ -225,6 +237,12 @@ export function useSeriesHistory(tags, range, deviceId, enabled = true) {
     // Depends on `range` itself, not just `range.id`: both `.id` and `.ms` are
     // read above, and range objects are the stable module constants from
     // lib/ranges.js, so this re-runs exactly when the id would have anyway.
+    //
+    // `store` is read above (to resume a backfill from cache) but is not a
+    // dependency: this effect is what calls setStore, so listing it would
+    // re-run this reconciliation on every absorbed page - tearing down and
+    // recreating the very subscriptions it just built.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [keysId, range, deviceId])
 
   useEffect(() => {

@@ -40,9 +40,12 @@ export function useKwhHistory(deviceId, range, enabled) {
       if (context) readings.push(context)
       for (const [k, v] of Object.entries(main)) {
         const t = Number(k)
-        if (Number.isFinite(t) && typeof v === 'number' && Number.isFinite(v)) {
-          readings.push({ t, value: v })
-        }
+        if (!Number.isFinite(t) || typeof v !== 'number' || !Number.isFinite(v)) continue
+        // Belt-and-suspenders against the tail listener below ever surfacing
+        // a key older than this window - it asks for the newest couple of
+        // keys in the whole node, not just the ones after `since`.
+        if (since != null && t < since) continue
+        readings.push({ t, value: v })
       }
       readings.sort((a, b) => a.t - b.t)
       setState({ readings, since, loading: false, error: null })
@@ -55,14 +58,33 @@ export function useKwhHistory(deviceId, range, enabled) {
 
     setState((s) => ({ ...s, loading: true, error: null }))
 
-    // Live, not a one-shot get(): a reading pushed while this is open should
-    // still land without the viewer having to reselect the range.
-    const mainQuery = since != null
+    // One-shot backfill, not a listener: at roughly two pushes a day even
+    // "all time" is on the order of 700 rows (see lib/kwh.js), but a bare
+    // onValue here still stayed open on the *entire* window with no upper
+    // bound - and on the "all time" range, no bound at all - which means
+    // every reconnect re-streams every reading in range, not just whichever
+    // one changed. A plain get() for the window, plus a tiny bounded tail
+    // below for whatever gets pushed while this is open, is the same
+    // backfill-then-follow shape useSeriesHistory already uses for every
+    // other tag.
+    const backfillQuery = since != null
       ? query(ref(db, path), orderByKey(), startAt(String(since)))
       : query(ref(db, path), orderByKey())
 
-    const unsubscribe = onValue(mainQuery, (snap) => {
-      main = snap.val() || {}
+    get(backfillQuery)
+      .then((snap) => {
+        if (cancelled) return
+        main = snap.val() || {}
+        emit()
+      })
+      .catch(fail)
+
+    // Live tail: the newest one or two keys in the node, however wide the
+    // window is. A reading pushed while this is open still lands without a
+    // reselect, at the cost of two keys instead of the whole history.
+    const tailQuery = query(ref(db, path), orderByKey(), limitToLast(2))
+    const unsubscribe = onValue(tailQuery, (snap) => {
+      main = { ...main, ...(snap.val() || {}) }
       emit()
     }, fail)
 
