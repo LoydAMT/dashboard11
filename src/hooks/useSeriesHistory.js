@@ -1,11 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import {
-  ref, query, orderByKey, startAt, endAt, limitToFirst, limitToLast, get, onValue,
-} from 'firebase/database'
+import { ref, query, orderByKey, endAt, limitToLast, onValue } from 'firebase/database'
 import { db } from '../firebase'
 import { floorToMinute, MINUTE } from '../lib/time'
 import { isRawRange } from '../lib/ranges'
 import { KWH_TAG_KEY } from '../lib/kwh'
+import { fetchRtdbRest, quoted } from '../lib/restdb'
+import { loadCachedRows, saveCachedRows } from '../lib/historyCache'
 
 // Bounds each raw backfill request. Firebase does not hard-cap how many
 // children a query can return, but asking for a quarter million rows - the
@@ -139,15 +139,16 @@ export function useSeriesHistory(tags, range, deviceId, enabled = true) {
       const slot = `${deviceId}:${key}@${range.id}`
       const since = floorToMinute(Date.now() - range.ms)
 
-      // Resume from what a previous subscription for this exact
-      // device+tag+window already fetched, instead of redownloading it -
-      // `store` outlives the subscription that populated it (only the
-      // listener gets torn down when a tag is hidden, the range flips away
-      // and back, or a device switch comes back to one already visited),
-      // but until now nothing here ever checked it before backfilling.
-      // History is append-only, so anything already cached is still good;
-      // only the gap since the newest cached point needs a fresh fetch.
-      const cachedRows = store[slot]?.rows
+      // Resume from what was already fetched for this exact
+      // device+tag+window, instead of redownloading it. In-memory `store`
+      // covers a subscription torn down and recreated within this same page
+      // load (a tag hidden then re-shown, a device switch back to one
+      // already visited); sessionStorage (see lib/historyCache.js) covers a
+      // plain reload, within the same tab, for whichever ranges are small
+      // enough to be worth persisting. Either way, history is append-only,
+      // so anything already cached is still good - only the gap since the
+      // newest cached point needs a fresh fetch.
+      const cachedRows = store[slot]?.rows || loadCachedRows(slot)
       const rowsByTime = new Map((cachedRows || []).map((r) => [r.t, r]))
       const backfillSince = cachedRows?.length
         ? Math.max(since, cachedRows[cachedRows.length - 1].t + 1)
@@ -173,6 +174,7 @@ export function useSeriesHistory(tags, range, deviceId, enabled = true) {
             }
             const rows = [...rowsByTime.values()].sort((a, b) => a.t - b.t)
             setStore((prev) => ({ ...prev, [slot]: { rows, error: null } }))
+            saveCachedRows(slot, rows)
           }
         : (raw) => {
             for (const [minute, v] of Object.entries(raw || {})) {
@@ -188,6 +190,7 @@ export function useSeriesHistory(tags, range, deviceId, enabled = true) {
             }
             const rows = [...rowsByTime.values()].sort((a, b) => a.t - b.t)
             setStore((prev) => ({ ...prev, [slot]: { rows, error: null } }))
+            saveCachedRows(slot, rows)
           }
 
       const fail = (error) => {
@@ -205,17 +208,22 @@ export function useSeriesHistory(tags, range, deviceId, enabled = true) {
 
       // 1. Backfill this tag's window, from `backfillSince` rather than
       // `since` so a resumed subscription only asks for what it does not
-      // already have cached (see above). Rollups are small even at 7 days
-      // (10,080 rows) and fetched in one shot; raw can be a quarter million
-      // rows at the 3-day ceiling and is paginated instead (see
-      // fetchRawBackfill / RAW_PAGE_SIZE above).
+      // already have cached (see above). Over REST, not the SDK's get():
+      // a one-shot bulk read is exactly the case where the SDK's realtime
+      // connection has no compression to offer and a plain HTTPS request
+      // does (see lib/restdb.js). Rollups are small even at 7 days (10,080
+      // rows) and fetched in one shot; raw can be a quarter million rows at
+      // the 3-day ceiling and is paginated instead (see fetchRawBackfill /
+      // RAW_PAGE_SIZE above) - REST changes how each page travels, not the
+      // fact that it is still fetched in bounded pages, which is what keeps
+      // a phone from having to parse and hold a quarter million rows at once.
       if (rawOnly) {
         fetchRawBackfill({ path, since: backfillSince, sub, absorb, fail })
       } else {
-        get(query(ref(db, path), orderByKey(), startAt(String(backfillSince)), endAt(ROLLUP_KEY_CEILING)))
-          .then((snap) => {
+        fetchRtdbRest(path, { orderBy: quoted('$key'), startAt: quoted(backfillSince), endAt: quoted(ROLLUP_KEY_CEILING) })
+          .then((val) => {
             if (sub.cancelled) return
-            absorb(snap.val())
+            absorb(val)
           })
           .catch(fail)
       }
@@ -298,18 +306,15 @@ async function fetchRawBackfill({ path, since, sub, absorb, fail }) {
   for (;;) {
     if (sub.cancelled) return
 
-    let snap
+    let page
     try {
-      snap = await get(
-        query(ref(db, path), orderByKey(), startAt(String(cursor)), limitToFirst(RAW_PAGE_SIZE)),
-      )
+      page = await fetchRtdbRest(path, { orderBy: quoted('$key'), startAt: quoted(cursor), limitToFirst: RAW_PAGE_SIZE })
     } catch (error) {
       fail(error)
       return
     }
     if (sub.cancelled) return
 
-    const page = snap.val()
     const keys = page ? Object.keys(page) : []
     absorb(page)
 
