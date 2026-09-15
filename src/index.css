@@ -54,7 +54,12 @@
      itself, unlike --text/--surface, which exist to invert. */
   --brand: #3d79ac;
 
-  color-scheme: light dark;
+  /* Native widgets (scrollbars, checkboxes, the date/time pickers this app
+     doesn't use yet) take their colours from this, independently of every
+     custom property above - declaring both keywords here would leave them
+     following the OS's own light/dark setting even when data-theme has
+     explicitly overridden it for everything else on the page. */
+  color-scheme: light;
 }
 
 /* Dark tokens live under an explicit attribute, not only a media query, so a
@@ -64,6 +69,7 @@
    from the same stored choice or the same system query, before paint - so
    there is no need to also keep a `prefers-color-scheme` fallback here. */
 :root[data-theme='dark'] {
+  color-scheme: dark;
   --bg: #0e1116;
   --surface: #171b22;
   --surface-2: #1f242d;
