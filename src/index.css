@@ -57,45 +57,49 @@
   color-scheme: light dark;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --bg: #0e1116;
-    --surface: #171b22;
-    --surface-2: #1f242d;
-    --border: #2b323d;
-    --border-strong: #3d4552;
-    --text: #e9edf3;
-    --text-dim: #9aa4b2;
-    --text-faint: #6e7885;
+/* Dark tokens live under an explicit attribute, not only a media query, so a
+   signed-in viewer's own choice (see hooks/useTheme.js) can override the OS
+   setting in either direction. The attribute is always present by the time
+   this stylesheet is first read - the inline script in index.html sets it,
+   from the same stored choice or the same system query, before paint - so
+   there is no need to also keep a `prefers-color-scheme` fallback here. */
+:root[data-theme='dark'] {
+  --bg: #0e1116;
+  --surface: #171b22;
+  --surface-2: #1f242d;
+  --border: #2b323d;
+  --border-strong: #3d4552;
+  --text: #e9edf3;
+  --text-dim: #9aa4b2;
+  --text-faint: #6e7885;
 
-    --live: #4ade80;
-    --live-bg: #10291b;
-    --stale: #fbbf24;
-    --stale-bg: #2e2410;
-    --down: #f87171;
-    --down-bg: #2e1414;
+  --live: #4ade80;
+  --live-bg: #10291b;
+  --stale: #fbbf24;
+  --stale-bg: #2e2410;
+  --down: #f87171;
+  --down-bg: #2e1414;
 
-    --alarm-hi: #f87171;
-    --alarm-hi-bg: #2e1414;
-    --alarm-lo: #93b4fd;
-    --alarm-lo-bg: #141d2e;
+  --alarm-hi: #f87171;
+  --alarm-hi-bg: #2e1414;
+  --alarm-lo: #93b4fd;
+  --alarm-lo-bg: #141d2e;
 
-    --accent: #58a6ff;
-    --grid: #262c36;
+  --accent: #58a6ff;
+  --grid: #262c36;
 
-    /* The same eight hues re-stepped for the #171b22 surface - a selected dark
-       set, not a flip of the light one. All eight clear 3:1 here. */
-    --series-1: #3987e5;
-    --series-2: #d95926;
-    --series-3: #199e70;
-    --series-4: #c98500;
-    --series-5: #d55181;
-    --series-6: #008300;
-    --series-7: #9085e9;
-    --series-8: #e66767;
-    --series-other: #8b94a3;
-    --shadow: 0 1px 2px rgba(0, 0, 0, .4);
-  }
+  /* The same eight hues re-stepped for the #171b22 surface - a selected dark
+     set, not a flip of the light one. All eight clear 3:1 here. */
+  --series-1: #3987e5;
+  --series-2: #d95926;
+  --series-3: #199e70;
+  --series-4: #c98500;
+  --series-5: #d55181;
+  --series-6: #008300;
+  --series-7: #9085e9;
+  --series-8: #e66767;
+  --series-other: #8b94a3;
+  --shadow: 0 1px 2px rgba(0, 0, 0, .4);
 }
 
 * { box-sizing: border-box; }
@@ -125,7 +129,12 @@ body {
 .masthead {
   position: sticky;
   top: 0;
-  z-index: 5;
+  /* Above .toast-stack (z-index 40): a sticky element with its own z-index
+     caps every descendant's stacking, however high its own z-index reads, at
+     this element's position among ITS siblings - so the alert panel's
+     z-index:50 only wins locally unless the masthead itself already clears
+     the toast stack it would otherwise open on top of. */
+  z-index: 45;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -914,10 +923,8 @@ body {
 .range-btn { transition: color .12s, background .12s; }
 .range-btn:hover:not(.range-active) { color: var(--text); }
 
-@media (prefers-color-scheme: dark) {
-  .card:hover { box-shadow: var(--shadow), 0 6px 16px rgba(0, 0, 0, .5); }
-  .range-active { box-shadow: 0 1px 2px rgba(0, 0, 0, .4), 0 0 0 1px var(--border-strong); }
-}
+:root[data-theme='dark'] .card:hover { box-shadow: var(--shadow), 0 6px 16px rgba(0, 0, 0, .5); }
+:root[data-theme='dark'] .range-active { box-shadow: 0 1px 2px rgba(0, 0, 0, .4), 0 0 0 1px var(--border-strong); }
 
 @media (max-width: 560px) {
   .stat dd { font-size: .98rem; }
@@ -1010,6 +1017,30 @@ body {
   align-items: center;
   gap: 8px;
   flex-wrap: wrap;
+}
+
+/* Below phone width, three separate button groups (view, axis, range) plus
+   two range rows no longer fit side by side without wrapping mid-group - a
+   "Chart/Table" pair splitting across two lines reads as four broken buttons.
+   Stacked full-width groups, each scrolling its own overflow horizontally
+   instead of wrapping, keeps every group visually whole. */
+@media (max-width: 560px) {
+  .panel-controls {
+    flex-direction: column;
+    align-items: stretch;
+    width: 100%;
+  }
+
+  .panel-controls .ranges {
+    width: 100%;
+    overflow-x: auto;
+    flex-wrap: nowrap;
+    scrollbar-width: none;
+  }
+
+  .panel-controls .ranges::-webkit-scrollbar { display: none; }
+  .panel-controls .range-btn { flex: none; }
+  .panel-controls .ranges-raw-label { flex: none; }
 }
 
 .tooltip-spread {
@@ -1432,3 +1463,273 @@ body {
 @media (max-width: 560px) {
   .vfd-buttons { grid-template-columns: 1fr; }
 }
+
+/* ---------- switch device / theme toggle ---------- */
+
+.switch-btn {
+  font: inherit;
+  font-size: .78rem;
+  font-weight: 600;
+  color: var(--text-dim);
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  padding: 5px 10px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.switch-btn:hover { color: var(--text); border-color: var(--border-strong); }
+.switch-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+.theme-toggle {
+  display: flex;
+  gap: 2px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 2px;
+}
+
+.theme-btn {
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-faint);
+  cursor: pointer;
+}
+
+.theme-btn:hover { color: var(--text-dim); }
+.theme-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+.theme-active {
+  background: var(--surface);
+  color: var(--accent);
+  box-shadow: 0 1px 2px rgba(16, 20, 28, .12);
+}
+
+/* ---------- alert toasts ---------- */
+
+.toast-stack {
+  position: fixed;
+  top: calc(64px + env(safe-area-inset-top, 0px));
+  right: 12px;
+  left: 12px;
+  z-index: 40;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 8px;
+  pointer-events: none;
+}
+
+.toast {
+  pointer-events: auto;
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  max-width: 380px;
+  width: 100%;
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-left-width: 4px;
+  border-radius: 10px;
+  box-shadow: var(--shadow), 0 8px 20px rgba(16, 20, 28, .12);
+  padding: 10px 10px 10px 12px;
+  font-size: .84rem;
+  line-height: 1.4;
+  animation: toast-in .18s ease-out;
+}
+
+@keyframes toast-in {
+  from { opacity: 0; transform: translateY(-6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .toast { animation: none; }
+}
+
+.toast-critical { border-left-color: var(--down); }
+.toast-warning { border-left-color: var(--stale); }
+.toast-info { border-left-color: var(--live); }
+
+.toast-icon {
+  flex: none;
+  font-size: .9rem;
+  line-height: 1.5;
+}
+
+.toast-critical .toast-icon { color: var(--down); }
+.toast-warning .toast-icon { color: var(--stale); }
+.toast-info .toast-icon { color: var(--live); }
+
+.toast-message { flex: 1; color: var(--text); min-width: 0; overflow-wrap: anywhere; }
+
+.toast-dismiss {
+  flex: none;
+  font: inherit;
+  font-size: 1rem;
+  line-height: 1;
+  color: var(--text-faint);
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+  padding: 2px 4px;
+}
+
+.toast-dismiss:hover { color: var(--text); }
+.toast-dismiss:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+/* ---------- alert bell / history panel ---------- */
+
+.alert-bell-wrap { position: relative; }
+
+.bell-btn {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--surface-2);
+  color: var(--text-dim);
+  cursor: pointer;
+}
+
+.bell-btn:hover { color: var(--text); border-color: var(--border-strong); }
+.bell-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+.bell-badge {
+  position: absolute;
+  top: -5px;
+  right: -5px;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 3px;
+  border-radius: 999px;
+  background: var(--down);
+  color: #fff;
+  font-size: .62rem;
+  font-weight: 700;
+  line-height: 16px;
+  text-align: center;
+}
+
+.alert-panel {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  /* Above .toast-stack (z-index 40) - both compete for the same top-right
+     corner, and an open history panel should never be the one left half
+     hidden behind a toast that is about to auto-dismiss anyway. */
+  z-index: 50;
+  width: min(340px, 88vw);
+  max-height: 70vh;
+  overflow: auto;
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: 10px;
+  box-shadow: var(--shadow), 0 10px 24px rgba(16, 20, 28, .16);
+}
+
+.alert-panel-head {
+  position: sticky;
+  top: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 12px;
+  background: var(--surface-2);
+  border-bottom: 1px solid var(--border);
+  font-size: .82rem;
+  font-weight: 650;
+}
+
+.alert-clear {
+  font: inherit;
+  font-size: .76rem;
+  font-weight: 600;
+  color: var(--text-dim);
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 3px 8px;
+  cursor: pointer;
+}
+
+.alert-clear:hover:not(:disabled) { color: var(--text); border-color: var(--border-strong); }
+.alert-clear:disabled { opacity: .5; cursor: not-allowed; }
+
+.alert-panel-empty {
+  padding: 18px 12px;
+  font-size: .82rem;
+  color: var(--text-faint);
+  text-align: center;
+}
+
+.alert-panel-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.alert-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 9px 12px;
+  border-bottom: 1px solid var(--border);
+  border-left: 3px solid transparent;
+  font-size: .8rem;
+}
+
+.alert-row:last-child { border-bottom: 0; }
+
+.alert-row-critical { border-left-color: var(--down); }
+.alert-row-warning { border-left-color: var(--stale); }
+.alert-row-info { border-left-color: var(--live); }
+
+.alert-row-message { color: var(--text); overflow-wrap: anywhere; }
+.alert-row-time {
+  flex: none;
+  color: var(--text-faint);
+  font-size: .72rem;
+  white-space: nowrap;
+}
+
+/* ---------- per-tag alarm session (card) ---------- */
+
+.card-alarm-meta {
+  margin-top: 3px;
+  font-size: .68rem;
+  color: var(--text-faint);
+  font-variant-numeric: tabular-nums;
+}
+
+.card-alarm-high .card-alarm-meta,
+.card-alarm-low .card-alarm-meta { color: inherit; opacity: .85; }
+
+/* ---------- anomaly highlighting (chart + table) ---------- */
+
+.chart-anomaly-note { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; }
+
+.anomaly-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  margin-left: 6px;
+}
+
+.anomaly-dot-breach-hi { background: var(--alarm-hi); margin-left: 0; }
+.anomaly-dot-spike { background: var(--stale); }
+
+.cell-breach-hi { background: var(--alarm-hi-bg); color: var(--alarm-hi); font-weight: 650; }
+.cell-breach-lo { background: var(--alarm-lo-bg); color: var(--alarm-lo); font-weight: 650; }
+.cell-spike { background: var(--stale-bg); color: var(--stale); font-weight: 650; }

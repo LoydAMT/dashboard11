@@ -9,8 +9,10 @@ import { useRtdbValue } from './hooks/useRtdbValue'
 import { useCadence } from './hooks/useCadence'
 import { useSeriesHistory } from './hooks/useSeriesHistory'
 import { useNow } from './hooks/useNow'
+import { useTheme } from './hooks/useTheme'
+import { useAlertCenter } from './hooks/useAlertCenter'
 import { systemState, stalenessThreshold, tagStalenessThreshold, isStaleLevel } from './lib/health'
-import { discoverTagKeys, buildTag, formatValue, displayUnit } from './lib/tags'
+import { discoverTagKeys, buildTag, formatValue, displayUnit, limitState } from './lib/tags'
 import { colorForIndex, MAX_SERIES } from './lib/palette'
 import { mergeSeries } from './lib/series'
 import { rangeById, DEFAULT_RANGE, isRawRange } from './lib/ranges'
@@ -27,6 +29,9 @@ import { VfdControl } from './components/VfdControl'
 import { SignIn } from './components/SignIn'
 import { DevicePicker } from './components/DevicePicker'
 import { NamingPage } from './components/NamingPage'
+import { ThemeToggle } from './components/ThemeToggle'
+import { AlertToasts } from './components/AlertToasts'
+import { AlertBell } from './components/AlertBell'
 import { signOutUser } from './auth'
 
 // Recharts is by far the heaviest thing in the bundle and none of it is needed
@@ -102,6 +107,8 @@ function Dashboard() {
   // `.info/connected` is local to the SDK, so it is watched regardless of auth.
   const connected = useConnection()
 
+  const { theme, setTheme } = useTheme()
+
   // Data reads wait for a resolved device; the rules would reject them
   // otherwise, and there is nothing to build a path from before then anyway.
   const latest = useRtdbValue(deviceId ? `devices/${deviceId}/latest` : null, ready)
@@ -136,6 +143,27 @@ function Dashboard() {
     const keys = discoverTagKeys(latest.data, tags.data)
     return keys.map((k) => buildTag(k, latest.data?.[k], tags.data?.[k]))
   }, [latest.data, tags.data])
+
+  // Each tag's own alarm/staleness, computed once and shared by the card
+  // grid and the alert centre below - previously duplicated inline in the
+  // grid's render loop, which meant a real alarm could only ever be *shown*,
+  // never *noticed* as an event worth a toast or a log entry.
+  const enrichedTags = useMemo(
+    () => tagList.map((tag) => {
+      const ownAge = tag.ts != null ? now - tag.ts : null
+      const tagThresholdMs = tagStalenessThreshold(tag.intervalMs)
+      const stale = systemStale || ownAge == null || ownAge > tagThresholdMs
+      return { ...tag, unit: displayUnit(tag), stale, alarm: stale ? 'unknown' : limitState(tag), ownAge }
+    }),
+    [tagList, now, systemStale],
+  )
+
+  const alertCenter = useAlertCenter({
+    deviceId,
+    tags: enrichedTags,
+    connectionLevel: state.level,
+    enabled: ready,
+  })
 
   // Colour is fixed to the tag, by its place in the full discovered list — not
   // by its rank among the visible series. Hiding one trend must not repaint the
@@ -258,7 +286,18 @@ function Dashboard() {
         periodMs={periodMs}
         email={ready ? user?.email : null}
         onSignOut={signOutUser}
+        theme={theme}
+        onThemeChange={setTheme}
+        canSwitchDevice={ready && deviceAccess.devices.length > 1}
+        onSwitchDevice={() => setChosenDeviceId(null)}
+        alertLog={ready ? alertCenter.log : EMPTY_LOG}
+        onClearAlerts={alertCenter.clearLog}
+        nowMs={now}
       />
+
+      {ready && (
+        <AlertToasts toasts={alertCenter.toasts} onDismiss={alertCenter.dismissToast} />
+      )}
 
       {!resolved && (
         <div className="notice notice-info">
@@ -311,29 +350,23 @@ function Dashboard() {
           </div>
         )}
   
-        {tagList.length > 0 && (
+        {enrichedTags.length > 0 && (
           <div className="grid">
-            {tagList.map((tag) => {
-              // A tag is stale if the link is down, or if this particular tag has
-              // stopped reporting on its *own* schedule - a 12-hour accumulator
-              // six hours quiet is not due yet, so it is judged against its own
-              // interval, never the device-wide one.
-              const ownAge = tag.ts != null ? now - tag.ts : null
-              const tagThresholdMs = tagStalenessThreshold(tag.intervalMs)
-              const tagStale = systemStale || ownAge == null || ownAge > tagThresholdMs
+            {enrichedTags.map((tag) => {
               const shown = visibleKeys.includes(tag.key)
-  
+
               return (
                 <TagCard
                   key={tag.key}
                   tag={tag}
-                  stale={tagStale}
+                  stale={tag.stale}
                   shown={shown}
                   color={colors[tag.key]}
                   blocked={!shown && atCapacity}
                   maxSeries={MAX_SERIES}
                   onSelect={toggleTag}
                   nowMs={now}
+                  session={alertCenter.sessions[tag.key]}
                 />
               )
             })}
@@ -490,6 +523,9 @@ const CLEARED = '/cleared'
 // the component a fresh empty object on every chart tick.
 const EMPTY_TABLE = { columns: [], groups: [], rows: [] }
 
+// Same reasoning, for the alert bell before a device is ready to have one.
+const EMPTY_LOG = []
+
 /**
  * One figure from the selected window. `live` marks the only one of the four
  * that is a present-tense reading rather than a summary of the range, because a
@@ -513,7 +549,10 @@ function Stat({ label, tag, value, live = false }) {
   )
 }
 
-function Masthead({ deviceName, periodMs, email, onSignOut }) {
+function Masthead({
+  deviceName, periodMs, email, onSignOut, theme, onThemeChange,
+  canSwitchDevice, onSwitchDevice, alertLog, onClearAlerts, nowMs,
+}) {
   return (
     <header className="masthead">
       <div className="masthead-brand">
@@ -532,9 +571,18 @@ function Masthead({ deviceName, periodMs, email, onSignOut }) {
             {periodMs ? ` · every ${formatInterval(periodMs)}` : ''}
           </span>
         )}
+        {canSwitchDevice && (
+          <button type="button" className="switch-btn" onClick={onSwitchDevice}>
+            Switch device
+          </button>
+        )}
         {/* Only a signed-in, authorized session ever gets an email to show -
             App.jsx passes null on every other screen, sign-in form included,
-            where there is nothing yet to sign out of. */}
+            where there is nothing yet to sign out of. The theme toggle and
+            alert bell are gated the same way: nothing to persist a preference
+            or an alert log against before then. */}
+        {email && <AlertBell log={alertLog} onClear={onClearAlerts} nowMs={nowMs} />}
+        {email && <ThemeToggle theme={theme} onChange={onThemeChange} />}
         {email && (
           <button type="button" className="signout-btn" onClick={onSignOut} title={email}>
             Sign out

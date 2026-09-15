@@ -11,6 +11,12 @@ import { isRawRange } from '../lib/ranges'
 // having one is that the file is where the long tail lives.
 const DISPLAY_LIMIT = 500
 
+const ANOMALY_LABEL = {
+  'breach-hi': 'Above this tag’s high limit',
+  'breach-lo': 'Below this tag’s low limit',
+  spike: 'An unusual spike against this tag’s recent trend',
+}
+
 /**
  * The chart's window as a grid, newest first.
  *
@@ -158,11 +164,20 @@ export function DataTable({
             {shown.map((row) => (
               <tr key={row.t}>
                 <th scope="row" className="col-time">{formatLocal(row.t)}</th>
-                {valueColumns.map((c) => (
-                  <td key={c.id} className={c.kind === 'num' ? 'num' : ''}>
-                    {cellText(c, row)}
-                  </td>
-                ))}
+                {valueColumns.map((c) => {
+                  const flag = (c.field === 'avg' || c.field === 'value')
+                    ? row.cells[`${c.tag.key}:flag`]
+                    : null
+                  return (
+                    <td
+                      key={c.id}
+                      className={[c.kind === 'num' ? 'num' : '', flag && `cell-${flag}`].filter(Boolean).join(' ')}
+                      title={flag ? ANOMALY_LABEL[flag] : undefined}
+                    >
+                      {cellText(c, row)}
+                    </td>
+                  )
+                })}
               </tr>
             ))}
           </tbody>

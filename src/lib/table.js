@@ -9,6 +9,7 @@
 
 import { displayUnit } from './tags'
 import { isRawRange } from './ranges'
+import { flagTableAnomalies } from './anomalies'
 
 const FIELD_LABEL = { min: 'min', avg: 'mean', max: 'max', now: 'now', value: 'value' }
 
@@ -67,6 +68,11 @@ export function buildTable({ byKey, tags, range, nowMs }) {
   const byTime = new Map()
 
   for (const tag of tags) {
+    // Flags, not a new read: built from the same rows this loop already
+    // walks (see lib/anomalies.js), so marking a breach or a spike here costs
+    // nothing beyond one more Map lookup per row.
+    const flags = flagTableAnomalies(byKey[tag.key] || [], tag)
+
     for (const r of byKey[tag.key] || []) {
       if (r.t < cutoff) continue
       if (!Number.isFinite(r.avg)) continue
@@ -89,6 +95,9 @@ export function buildTable({ byKey, tags, range, nowMs }) {
         cells[`${tag.key}:min`] = numOr(r.min, r.avg)
         cells[`${tag.key}:max`] = numOr(r.max, r.avg)
       }
+
+      const flag = flags.get(r.t)
+      if (flag) cells[`${tag.key}:flag`] = flag
     }
   }
 

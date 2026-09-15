@@ -1,6 +1,15 @@
 import { formatValue, displayUnit, limitState } from '../lib/tags'
 import { formatAgo } from '../lib/time'
 
+/** "1h 4m", "6m", never "0m" - a just-started episode reads as "just now" instead. */
+function formatDuration(ms) {
+  if (!ms || ms < 30_000) return 'just now'
+  const totalMin = Math.round(ms / 60_000)
+  const h = Math.floor(totalMin / 60)
+  const m = totalMin % 60
+  return h > 0 ? `${h}h ${m}m` : `${m}m`
+}
+
 /**
  * One tag. The card carries its own freshness, because the page-level banner
  * says whether the *link* is healthy and this says whether *this reading* is.
@@ -12,7 +21,7 @@ import { formatAgo } from '../lib/time'
  * colour bar alone would leave a colourblind reader guessing which card belongs
  * to which line.
  */
-export function TagCard({ tag, stale, shown, color, blocked, maxSeries, onSelect, nowMs }) {
+export function TagCard({ tag, stale, shown, color, blocked, maxSeries, onSelect, nowMs, session }) {
   const alarm = stale ? 'unknown' : limitState(tag)
   const unit = displayUnit(tag)
   const age = tag.ts != null ? nowMs - tag.ts : null
@@ -75,6 +84,20 @@ export function TagCard({ tag, stale, shown, color, blocked, maxSeries, onSelect
 
       {alarm === 'high' && <div className="card-flag">Above high limit</div>}
       {alarm === 'low' && <div className="card-flag">Below low limit</div>}
+
+      {/* Session-only, not "today" - a real day's tally would mean fetching a
+          day of this tag's history just to caption a card, which is the exact
+          re-download-on-every-toggle cost this dashboard otherwise goes out
+          of its way to avoid (see useSeriesHistory). This counts only what
+          has happened while this dashboard has been open. */}
+      {session && (session.episodes > 0) && (
+        <div className="card-alarm-meta">
+          {session.activeSince != null
+            ? `In alarm ${formatDuration(nowMs - session.activeSince)}`
+            : `Cleared · ${formatDuration(session.closedMs)} total`}
+          {session.episodes > 1 && ` · ${session.episodes}× this session`}
+        </div>
+      )}
 
       {alarm === 'ok' && (tag.loLimit != null || tag.hiLimit != null) && (
         <div className="card-limits">

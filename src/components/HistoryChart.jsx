@@ -1,3 +1,4 @@
+import { useMemo } from 'react'
 import {
   ComposedChart, Area, Line, XAxis, YAxis, CartesianGrid,
   Tooltip, ReferenceLine, ResponsiveContainer, LabelList,
@@ -5,6 +6,10 @@ import {
 import { formatAxisTime, formatLocal } from '../lib/time'
 import { formatValue, displayUnit } from '../lib/tags'
 import { computeDomain, axisTickFormatter, axisTicks } from '../lib/domain'
+import { flagChartAnomalies } from '../lib/anomalies'
+
+const ANOMALY_COLOR = { 'breach-hi': 'var(--alarm-hi)', 'breach-lo': 'var(--alarm-lo)', spike: 'var(--stale)' }
+const ANOMALY_TEXT = { 'breach-hi': 'above its high limit', 'breach-lo': 'below its low limit', spike: 'an unusual spike' }
 
 /**
  * One-minute rollups for one or several tags over the selected window - or,
@@ -27,6 +32,21 @@ import { computeDomain, axisTickFormatter, axisTicks } from '../lib/domain'
 export function HistoryChart({ tags, colors, data, rangeMs, raw, indexed, loading, error }) {
   const single = tags.length === 1 ? tags[0] : null
   const isBool = single?.dataType === 'bool'
+
+  // Flags, not new data: built from the same `data` already being plotted
+  // (see lib/anomalies.js). Only a lone series has a true per-bucket
+  // envelope to test breaches against (lib/series.js); an overlay of several
+  // falls back to each bucket's mean, which is why `hasEnvelope` only ever
+  // applies to `single`. Computed even while loading/empty/erroring above so
+  // this hook is never called conditionally.
+  const anomalies = useMemo(() => {
+    const out = {}
+    for (const tag of tags) {
+      out[tag.key] = flagChartAnomalies(data, tag, tag.key === single?.key)
+    }
+    return out
+  }, [data, tags, single])
+  const hasAnomalies = Object.values(anomalies).some((m) => m.size > 0)
 
   if (error) {
     return (
@@ -157,7 +177,9 @@ export function HistoryChart({ tags, colors, data, rangeMs, raw, indexed, loadin
               type={tag.dataType === 'bool' && !indexed ? 'stepAfter' : 'monotone'}
               stroke={colors[tag.key]}
               strokeWidth={2}
-              dot={false}
+              dot={(props) => (
+                <AnomalyDot {...props} kind={anomalies[tag.key]?.get(props.payload?.t)} />
+              )}
               isAnimationActive={false}
               connectNulls={false}
               activeDot={{ r: 4, strokeWidth: 2, stroke: 'var(--surface)' }}
@@ -177,7 +199,35 @@ export function HistoryChart({ tags, colors, data, rangeMs, raw, indexed, loadin
           ))}
         </ComposedChart>
       </ResponsiveContainer>
+
+      {hasAnomalies && (
+        <div className="chart-note chart-anomaly-note">
+          <span className="anomaly-dot anomaly-dot-breach-hi" aria-hidden="true" /> above/below limit
+          {' · '}
+          <span className="anomaly-dot anomaly-dot-spike" aria-hidden="true" /> unusual spike
+        </div>
+      )}
     </div>
+  )
+}
+
+/**
+ * A marked point, drawn only where `kind` says something is actually wrong -
+ * every ordinary point still has `dot={false}`'s effect (nothing drawn), so a
+ * healthy trend looks exactly as clean as it always did.
+ */
+function AnomalyDot({ cx, cy, kind }) {
+  if (!kind || cx == null || cy == null) return null
+  return (
+    <circle
+      cx={cx}
+      cy={cy}
+      r={4}
+      fill={ANOMALY_COLOR[kind]}
+      stroke="var(--surface)"
+      strokeWidth={1.5}
+      aria-label={ANOMALY_TEXT[kind]}
+    />
   )
 }
 
