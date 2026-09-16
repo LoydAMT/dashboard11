@@ -12,7 +12,7 @@ import { useNow } from './hooks/useNow'
 import { useTheme } from './hooks/useTheme'
 import { useAlertCenter } from './hooks/useAlertCenter'
 import { systemState, stalenessThreshold, tagStalenessThreshold, isStaleLevel } from './lib/health'
-import { discoverTagKeys, buildTag, formatValue, displayUnit, limitState } from './lib/tags'
+import { discoverTagKeys, buildTag, formatValue, displayUnit, limitState, FREQUENCY_TAG_KEY } from './lib/tags'
 import { colorForIndex, MAX_SERIES } from './lib/palette'
 import { mergeSeries } from './lib/series'
 import { rangeById, DEFAULT_RANGE, isRawRange } from './lib/ranges'
@@ -164,6 +164,14 @@ function Dashboard() {
     connectionLevel: state.level,
     enabled: ready,
   })
+
+  // Frequency is the VFD's own output, not a meter reading - showing it in
+  // the same grid as Current/Voltage/kWh reads as "another sensor" when it is
+  // actually the drive answering the panel next to it. Pulled out of the
+  // meter grid and rendered inside VfdControl instead; everything else about
+  // it (staleness, chart selection, colour) is unchanged.
+  const frequencyTag = enrichedTags.find((t) => t.key === FREQUENCY_TAG_KEY) || null
+  const meterTags = enrichedTags.filter((t) => t.key !== FREQUENCY_TAG_KEY)
 
   // Colour is fixed to the tag, by its place in the full discovered list — not
   // by its rank among the visible series. Hiding one trend must not repaint the
@@ -333,7 +341,19 @@ function Dashboard() {
             renders once `ready` (a resolved device) is true; kept as a prop
             so its own "checking session" copy stays correct if it is ever
             reused somewhere reachable before this gate. */}
-        <VfdControl deviceId={deviceId} mayControl={mayControl} authResolved />
+        <VfdControl
+          deviceId={deviceId}
+          mayControl={mayControl}
+          authResolved
+          frequencyTag={frequencyTag}
+          frequencyShown={visibleKeys.includes(FREQUENCY_TAG_KEY)}
+          frequencyColor={colors[FREQUENCY_TAG_KEY]}
+          frequencyBlocked={!visibleKeys.includes(FREQUENCY_TAG_KEY) && atCapacity}
+          onSelectFrequency={toggleTag}
+          maxSeries={MAX_SERIES}
+          nowMs={now}
+          frequencySession={alertCenter.sessions[FREQUENCY_TAG_KEY]}
+        />
   
         {dataError && <ErrorNotice title="Could not read the database" error={dataError} />}
   
@@ -350,9 +370,9 @@ function Dashboard() {
           </div>
         )}
   
-        {enrichedTags.length > 0 && (
+        {meterTags.length > 0 && (
           <div className="grid">
-            {enrichedTags.map((tag) => {
+            {meterTags.map((tag) => {
               const shown = visibleKeys.includes(tag.key)
 
               return (

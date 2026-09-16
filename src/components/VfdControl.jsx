@@ -4,6 +4,7 @@ import { useNow } from '../hooks/useNow'
 import { formatAgo, formatLocal } from '../lib/time'
 import { POLL_MS, VFD_OFF, VFD_ON, pastFor, stateFor, verbFor } from '../lib/vfd'
 import { useDeviceName } from '../hooks/useDeviceName'
+import { TagCard } from './TagCard'
 
 // Said once in the panel and again in the dialog. It is the sort of thing that
 // gets skimmed exactly when it matters, so it is not tucked into a tooltip.
@@ -17,7 +18,19 @@ const NOT_AN_ESTOP =
 const NOT_A_READBACK =
   'Shows commands and their acknowledgements, not a readback from the drive.'
 
-export function VfdControl({ deviceId, mayControl, authResolved }) {
+export function VfdControl({
+  deviceId,
+  mayControl,
+  authResolved,
+  frequencyTag,
+  frequencyShown,
+  frequencyColor,
+  frequencyBlocked,
+  onSelectFrequency,
+  maxSeries,
+  nowMs,
+  frequencySession,
+}) {
   // Reading commands/ is enabled unconditionally, not on mayControl: this
   // component only ever mounts once App.jsx's `ready` gate has already
   // confirmed some access to this device (viewer or better), and the
@@ -57,6 +70,27 @@ export function VfdControl({ deviceId, mayControl, authResolved }) {
       <p className="vfd-warning" role="note">
         <strong>Not an emergency stop.</strong> {NOT_AN_ESTOP}
       </p>
+
+      {/* The drive's actual output frequency, not a command or an
+          acknowledgement - it lives here rather than in the meter-reading
+          grid below because it describes this VFD, not something the meter
+          is measuring, and sitting next to Current/Voltage/kWh read as "just
+          another sensor" instead of the drive's own output. */}
+      {frequencyTag && (
+        <div className="grid vfd-frequency">
+          <TagCard
+            tag={frequencyTag}
+            stale={frequencyTag.stale}
+            shown={frequencyShown}
+            color={frequencyColor}
+            blocked={frequencyBlocked}
+            maxSeries={maxSeries}
+            onSelect={onSelectFrequency}
+            nowMs={nowMs}
+            session={frequencySession}
+          />
+        </div>
+      )}
 
       {!mayControl && (
         <p className="vfd-locked">
