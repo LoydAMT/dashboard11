@@ -6,6 +6,17 @@
 // The one rule this file exists to enforce: the tag list is discovered, never
 // declared. Two tags today, forty next month — nothing here counts them.
 
+// The RTDB key for the VFD frequency tag. Named here, not inferred from unit
+// or dataType, because the scale below has to key off the exact tag identity
+// - the same reason lib/kwh.js keeps KWH_TAG_KEY next to the logic that needs it.
+export const FREQUENCY_TAG_KEY = 'Frequency'
+
+// The VFD's frequency register is a raw 16-bit count, not Hz: most drives
+// report in 0.01 Hz steps, so 5000 on the wire means 50.00 Hz. Applied on
+// read only, same reasoning as lib/scale.js - RTDB keeps the raw count the
+// device actually published.
+export const FREQUENCY_SCALE = 0.01
+
 /**
  * Union of every tag key seen under `latest/` and `tags/`.
  *
@@ -43,7 +54,10 @@ const sortKey = (name) => name.replace(/[./$#[\]]/g, '_')
 export function buildTag(key, latest, meta) {
   const dataType = meta?.dataType || 'num'
   const unit = meta?.unit ?? latest?.unit ?? null
-  const value = latest?.value ?? null
+  const rawValue = latest?.value ?? null
+  const value = key === FREQUENCY_TAG_KEY && typeof rawValue === 'number'
+    ? rawValue * FREQUENCY_SCALE
+    : rawValue
 
   return {
     key,
@@ -94,6 +108,11 @@ export function formatValue(tag) {
   if (dataType === 'text') return String(value)
 
   if (typeof value !== 'number' || !Number.isFinite(value)) return String(value)
+
+  // Frequency is a scaled fixed-point reading (see FREQUENCY_SCALE above), so
+  // an exact multiple of 1 Hz must still show as "50.00", not fall through to
+  // the bare-integer branch below like an unscaled tag would.
+  if (tag.key === FREQUENCY_TAG_KEY) return value.toFixed(2)
 
   // Keep magnitudes readable without inventing precision the sensor lacks.
   const abs = Math.abs(value)

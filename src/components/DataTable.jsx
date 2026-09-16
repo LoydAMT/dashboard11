@@ -197,5 +197,5 @@ export function DataTable({
 function cellText(column, row) {
   const v = row.cells[column.id]
   if (v == null) return '—'
-  return formatValue({ value: v, dataType: column.tag.dataType })
+  return formatValue({ value: v, dataType: column.tag.dataType, key: column.tag.key })
 }

@@ -536,7 +536,7 @@ function Stat({ label, tag, value, live = false }) {
   const unit = displayUnit(tag)
   const text = value == null
     ? '—'
-    : formatValue({ value, dataType: tag.dataType })
+    : formatValue({ value, dataType: tag.dataType, key: tag.key })
 
   return (
     <div className={`stat${live ? ' stat-live' : ''}`}>
