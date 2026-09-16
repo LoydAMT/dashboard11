@@ -1278,6 +1278,14 @@ body {
 
 .vfd { margin-top: 20px; }
 
+.vfd-frequency {
+  width: fit-content;
+  min-width: 172px;
+  max-width: 248px;
+  cursor: default;
+  margin: 0 2px 12px;
+}
+
 .vfd-warning {
   display: flex;
   gap: 8px;

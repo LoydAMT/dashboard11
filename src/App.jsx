@@ -139,7 +139,7 @@ function Dashboard() {
   const systemStale = isStaleLevel(state.level)
 
   // Tags are discovered from the data. Nothing here knows there are two.
-  const tagList = useMemo(() => {
+  const tagListAll = useMemo(() => {
     const keys = discoverTagKeys(latest.data, tags.data)
     return keys.map((k) => buildTag(k, latest.data?.[k], tags.data?.[k]))
   }, [latest.data, tags.data])
@@ -149,13 +149,13 @@ function Dashboard() {
   // grid's render loop, which meant a real alarm could only ever be *shown*,
   // never *noticed* as an event worth a toast or a log entry.
   const enrichedTags = useMemo(
-    () => tagList.map((tag) => {
+    () => tagListAll.map((tag) => {
       const ownAge = tag.ts != null ? now - tag.ts : null
       const tagThresholdMs = tagStalenessThreshold(tag.intervalMs)
       const stale = systemStale || ownAge == null || ownAge > tagThresholdMs
       return { ...tag, unit: displayUnit(tag), stale, alarm: stale ? 'unknown' : limitState(tag), ownAge }
     }),
-    [tagList, now, systemStale],
+    [tagListAll, now, systemStale],
   )
 
   const alertCenter = useAlertCenter({
@@ -165,13 +165,15 @@ function Dashboard() {
     enabled: ready,
   })
 
-  // Frequency is the VFD's own output, not a meter reading - showing it in
-  // the same grid as Current/Voltage/kWh reads as "another sensor" when it is
-  // actually the drive answering the panel next to it. Pulled out of the
-  // meter grid and rendered inside VfdControl instead; everything else about
-  // it (staleness, chart selection, colour) is unchanged.
+  // Frequency is the VFD's own output, not a meter reading, and (per the
+  // pusher's own tags/history config) has no history behind it - only
+  // devices/{id}/latest/Frequency is ever written. So unlike the other tags
+  // it never appears in the meter grid, is never offered as a chart trend,
+  // and stays out of `tagList`-driven machinery below (colour assignment,
+  // toggleTag) entirely; VfdControl renders its live value directly.
   const frequencyTag = enrichedTags.find((t) => t.key === FREQUENCY_TAG_KEY) || null
   const meterTags = enrichedTags.filter((t) => t.key !== FREQUENCY_TAG_KEY)
+  const tagList = tagListAll.filter((t) => t.key !== FREQUENCY_TAG_KEY)
 
   // Colour is fixed to the tag, by its place in the full discovered list — not
   // by its rank among the visible series. Hiding one trend must not repaint the
@@ -346,18 +348,12 @@ function Dashboard() {
           mayControl={mayControl}
           authResolved
           frequencyTag={frequencyTag}
-          frequencyShown={visibleKeys.includes(FREQUENCY_TAG_KEY)}
-          frequencyColor={colors[FREQUENCY_TAG_KEY]}
-          frequencyBlocked={!visibleKeys.includes(FREQUENCY_TAG_KEY) && atCapacity}
-          onSelectFrequency={toggleTag}
-          maxSeries={MAX_SERIES}
           nowMs={now}
-          frequencySession={alertCenter.sessions[FREQUENCY_TAG_KEY]}
         />
   
         {dataError && <ErrorNotice title="Could not read the database" error={dataError} />}
   
-        {!dataError && tagList.length === 0 && (
+        {!dataError && tagListAll.length === 0 && (
           <div className="notice">
             <h2>{latest.loading ? 'Loading tags…' : 'No tags yet'}</h2>
             <p>

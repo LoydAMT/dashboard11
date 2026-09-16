@@ -4,7 +4,6 @@ import { db } from '../firebase'
 import { floorToMinute, MINUTE } from '../lib/time'
 import { isRawRange } from '../lib/ranges'
 import { KWH_TAG_KEY } from '../lib/kwh'
-import { FREQUENCY_TAG_KEY, FREQUENCY_SCALE } from '../lib/tags'
 import { fetchRtdbRest, quoted } from '../lib/restdb'
 import { loadCachedRows, saveCachedRows } from '../lib/historyCache'
 
@@ -166,21 +165,12 @@ export function useSeriesHistory(tags, range, deviceId, enabled = true) {
       // in a short window (a 12-hourly tag on a 1h range), and that has to
       // read as "answered, nothing here" rather than leave `ready` uncounted
       // and the loading state waiting on a snapshot that already arrived.
-      // Frequency's raw wire count needs the same read-time scale its live
-      // value gets in lib/tags.js's buildTag - applied here, at ingestion,
-      // so every downstream consumer (chart, min/avg/max stats, table) works
-      // with the same real-unit numbers without needing to know the tag.
-      // `?? 1` keeps every other tag byte-for-byte on the unscaled path.
-      const scale = key === FREQUENCY_TAG_KEY ? FREQUENCY_SCALE : 1
-      const scaled = (v) => (typeof v === 'number' && Number.isFinite(v) ? v * scale : v)
-
       const absorb = rawOnly
         ? (raw) => {
             for (const [tsKey, v] of Object.entries(raw || {})) {
               const t = Number(tsKey)
               if (!Number.isFinite(t) || typeof v !== 'number' || !Number.isFinite(v)) continue
-              const sv = scaled(v)
-              rowsByTime.set(t, { t, min: sv, max: sv, avg: sv, n: 1 })
+              rowsByTime.set(t, { t, min: v, max: v, avg: v, n: 1 })
             }
             const rows = [...rowsByTime.values()].sort((a, b) => a.t - b.t)
             setStore((prev) => ({ ...prev, [slot]: { rows, error: null } }))
@@ -192,9 +182,9 @@ export function useSeriesHistory(tags, range, deviceId, enabled = true) {
               if (!Number.isFinite(t) || v == null) continue
               rowsByTime.set(t, {
                 t,
-                min: scaled(numOr(v.min, v.avg)),
-                max: scaled(numOr(v.max, v.avg)),
-                avg: scaled(numOr(v.avg, null)),
+                min: numOr(v.min, v.avg),
+                max: numOr(v.max, v.avg),
+                avg: numOr(v.avg, null),
                 n: typeof v.n === 'number' ? v.n : 1,
               })
             }

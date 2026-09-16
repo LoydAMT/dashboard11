@@ -4,7 +4,7 @@ import { useNow } from '../hooks/useNow'
 import { formatAgo, formatLocal } from '../lib/time'
 import { POLL_MS, VFD_OFF, VFD_ON, pastFor, stateFor, verbFor } from '../lib/vfd'
 import { useDeviceName } from '../hooks/useDeviceName'
-import { TagCard } from './TagCard'
+import { formatValue, displayUnit } from '../lib/tags'
 
 // Said once in the panel and again in the dialog. It is the sort of thing that
 // gets skimmed exactly when it matters, so it is not tucked into a tooltip.
@@ -18,19 +18,7 @@ const NOT_AN_ESTOP =
 const NOT_A_READBACK =
   'Shows commands and their acknowledgements, not a readback from the drive.'
 
-export function VfdControl({
-  deviceId,
-  mayControl,
-  authResolved,
-  frequencyTag,
-  frequencyShown,
-  frequencyColor,
-  frequencyBlocked,
-  onSelectFrequency,
-  maxSeries,
-  nowMs,
-  frequencySession,
-}) {
+export function VfdControl({ deviceId, mayControl, authResolved, frequencyTag, nowMs }) {
   // Reading commands/ is enabled unconditionally, not on mayControl: this
   // component only ever mounts once App.jsx's `ready` gate has already
   // confirmed some access to this device (viewer or better), and the
@@ -74,23 +62,10 @@ export function VfdControl({
       {/* The drive's actual output frequency, not a command or an
           acknowledgement - it lives here rather than in the meter-reading
           grid below because it describes this VFD, not something the meter
-          is measuring, and sitting next to Current/Voltage/kWh read as "just
-          another sensor" instead of the drive's own output. */}
-      {frequencyTag && (
-        <div className="grid vfd-frequency">
-          <TagCard
-            tag={frequencyTag}
-            stale={frequencyTag.stale}
-            shown={frequencyShown}
-            color={frequencyColor}
-            blocked={frequencyBlocked}
-            maxSeries={maxSeries}
-            onSelect={onSelectFrequency}
-            nowMs={nowMs}
-            session={frequencySession}
-          />
-        </div>
-      )}
+          is measuring. A plain readout, not a TagCard: the device only ever
+          publishes the live value for this tag now (no history/Frequency
+          node), so there is nothing for a click to add to the chart. */}
+      {frequencyTag && <FrequencyReadout tag={frequencyTag} nowMs={nowMs} />}
 
       {!mayControl && (
         <p className="vfd-locked">
@@ -172,6 +147,36 @@ export function VfdControl({
         )}
       </dialog>
     </section>
+  )
+}
+
+/**
+ * The VFD's output frequency - live value only, no history behind it (see
+ * lib/tags.js). Styled like a meter card so it reads consistently with the
+ * grid below, but a plain div rather than a button: there is no chart trend
+ * for a click to toggle.
+ */
+function FrequencyReadout({ tag, nowMs }) {
+  const unit = displayUnit(tag)
+  const age = tag.ts != null ? nowMs - tag.ts : null
+
+  return (
+    <div className={`card vfd-frequency${tag.stale ? ' card-stale' : ''}`}>
+      <div className="card-head">
+        <span className="card-name">{tag.name}</span>
+      </div>
+      <div className="card-value">
+        <span className="card-number">{tag.hasReading ? formatValue(tag) : '—'}</span>
+        {unit && <span className="card-unit">{unit}</span>}
+      </div>
+      <div className="card-age">
+        {tag.ts == null
+          ? 'never reported'
+          : tag.stale
+            ? `last updated ${formatAgo(age)}`
+            : formatAgo(age)}
+      </div>
+    </div>
   )
 }
 

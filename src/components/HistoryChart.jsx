@@ -4,7 +4,7 @@ import {
   Tooltip, ReferenceLine, ResponsiveContainer, LabelList,
 } from 'recharts'
 import { formatAxisTime, formatLocal } from '../lib/time'
-import { formatValue, displayUnit, FREQUENCY_TAG_KEY } from '../lib/tags'
+import { formatValue, displayUnit } from '../lib/tags'
 import { computeDomain, axisTickFormatter, axisTicks } from '../lib/domain'
 import { flagChartAnomalies } from '../lib/anomalies'
 
@@ -292,9 +292,7 @@ function ChartTooltip({ active, payload, label, tags, colors, indexed }) {
           case where it is drawn. */}
       {shown.length === 1 && row.min != null && row.max != null && row.max !== row.min && (
         <div className="tooltip-spread">
-          {shown[0].key === FREQUENCY_TAG_KEY
-            ? <>min {row.min.toFixed(2)} · max {row.max.toFixed(2)}</>
-            : <>min {round(row.min)} · max {round(row.max)}</>}
+          min {round(row.min)} · max {round(row.max)}
         </div>
       )}
 
