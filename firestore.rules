@@ -1,0 +1,21 @@
+// Cloud Firestore security rules.
+//
+// This database currently holds exactly one thing: the minute-rollup
+// archive at devices/{deviceId}/archive/{docId}, written only by the
+// archiveRollups Cloud Function via the Admin SDK (which bypasses these
+// rules entirely, so denying every client here costs that function
+// nothing). There is no defined read path for the dashboard yet - see
+// the archive relay task notes for the two options under consideration
+// (a server-side endpoint that checks the existing RTDB access list, or
+// a parallel access-list mirror written into Firestore). Neither is
+// built, so this denies all direct client reads and writes, with no
+// exceptions, until that's decided.
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
