@@ -27,6 +27,35 @@ function hourOf(ms) {
   return Math.floor(ms / HOUR_MS) * HOUR_MS;
 }
 
+// How long a browser may reuse this response.
+//
+// Archive rows for a closed hour are immutable: the device archives an hour
+// once it has ended and nothing rewrites it afterwards. So the common case -
+// a chart refetching a historical window on reload, on a range switch, or on
+// a device toggle - can be free after the first request.
+//
+// `private` is load-bearing, not decoration. It lets the requesting browser
+// cache while forbidding any shared proxy or CDN from doing so, which keeps
+// the per-user access check on the path for every first request. A `public`
+// response would be handed out by a CDN to whoever asked for the URL, with
+// no permission check at all - the whole reason a shared CDN is a separate,
+// larger piece of work than this.
+//
+// Both conditions are required for the long cache:
+//   - the window ends before the current hour, so no row in it is still
+//     pending
+//   - every hour in the window actually returned a document. A gap means the
+//     device is behind on archiving and those rows are still coming (wecon3
+//     has run hours behind), and caching a gap for a year would make it
+//     permanent for that browser.
+function cacheControlFor({ to, hourCount, docCount, now }) {
+  const windowClosed = to < hourOf(now);
+  const complete = docCount === hourCount;
+  return windowClosed && complete
+    ? 'private, max-age=31536000, immutable'
+    : 'private, max-age=60';
+}
+
 function validateQuery(q) {
   if (!q || typeof q !== 'object') {
     return { ok: false, reason: 'missing query parameters' };
@@ -170,8 +199,19 @@ function createHandler({ verifyToken, hasAccess, getArchiveDocs }) {
     }
     rows.sort((a, b) => a.t - b.t);
 
+    // Keyed on the token as well as the URL. Without this, a cached response
+    // sits in a shared browser profile under a URL alone, and a second person
+    // signing in on that machine could be served rows for a device they have
+    // no access to. Tokens rotate about hourly, which bounds reuse to roughly
+    // that - still enough for reloads and range switches within a session,
+    // which is where nearly all the repetition is.
+    res.set('Vary', 'X-Id-Token');
+    res.set(
+      'Cache-Control',
+      cacheControlFor({ to, hourCount: hours.length, docCount: (docs || []).length, now: Date.now() }),
+    );
     res.status(200).json({ device, tag, from, to, rows });
   };
 }
 
-module.exports = { createHandler, validateQuery, hourOf, MAX_HOURS };
+module.exports = { createHandler, validateQuery, hourOf, cacheControlFor, MAX_HOURS };

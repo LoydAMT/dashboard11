@@ -474,3 +474,73 @@ test('readArchive: validateQuery expands the window into whole hour buckets', ()
   assert.equal(v.ok, true);
   assert.deepEqual(v.hours, [HOUR, HOUR + 3600000, HOUR + 2 * 3600000]);
 });
+
+// --- response caching -------------------------------------------------
+//
+// Archive rows for a closed, fully-archived hour never change, so the
+// browser is allowed to keep them. Both halves of that sentence are load
+// bearing, and each gets a test: an hour that has not closed yet may still
+// gain rows, and an hour missing its document is one the device has not
+// archived yet - caching either for a year would freeze a gap into place.
+
+const { cacheControlFor } = require('./readArchive');
+
+const PAST_HOUR = HOUR - 5 * 3600000;
+
+test('readArchive: a closed, fully-archived window is cacheable for a long time', () => {
+  const cc = cacheControlFor({ to: PAST_HOUR + 3599999, hourCount: 1, docCount: 1, now: Date.now() });
+  assert.match(cc, /immutable/);
+  assert.match(cc, /^private/);   // never shared-cacheable: see the note in readArchive.js
+});
+
+test('readArchive: a window reaching into the current hour is only briefly cacheable', () => {
+  const cc = cacheControlFor({ to: HOUR + 60000, hourCount: 1, docCount: 1, now: Date.now() });
+  assert.equal(cc, 'private, max-age=60');
+});
+
+test('readArchive: a closed window with a missing hour is NOT cached long - those rows are still coming', () => {
+  // Three hours requested, two archived: the device is behind (wecon3 has
+  // run hours behind before). Caching this for a year would make the gap
+  // permanent for that browser even after the hour is finally archived.
+  const cc = cacheControlFor({ to: PAST_HOUR + 3 * 3600000 - 1, hourCount: 3, docCount: 2, now: Date.now() });
+  assert.equal(cc, 'private, max-age=60');
+});
+
+test('readArchive: a successful response carries Cache-Control and varies on the token', async () => {
+  const { handler } = makeReadHandler();
+  const res = makeReadRes();
+  await handler(makeReadReq({ query: okQuery(), headers: { 'x-id-token': 'good' } }), res);
+
+  assert.equal(res.statusCode, 200);
+  // Keyed on the token too, so a second person on a shared browser profile
+  // cannot be served rows for a device they have no access to.
+  assert.equal(res.headers['Vary'], 'X-Id-Token');
+  assert.match(res.headers['Cache-Control'], /^private/);
+});
+
+test('readArchive: a past window whose hours are all present gets the immutable header end to end', async () => {
+  const { handler } = makeReadHandler({
+    getArchiveDocs: async () => [{ samples: [{ t: PAST_HOUR + 60000, min: 1, avg: 2, max: 3, n: 60 }] }],
+  });
+  const res = makeReadRes();
+  await handler(
+    makeReadReq({
+      query: { device: 'wecon3', tag: 'Current', from: String(PAST_HOUR), to: String(PAST_HOUR + 3599999) },
+      headers: { 'x-id-token': 'good' },
+    }),
+    res,
+  );
+
+  assert.equal(res.statusCode, 200);
+  assert.match(res.headers['Cache-Control'], /immutable/);
+});
+
+test('readArchive: a refused request does not get a caching header at all', async () => {
+  const { handler } = makeReadHandler({ hasAccess: async () => false });
+  const res = makeReadRes();
+  await handler(makeReadReq({ query: okQuery(), headers: { 'x-id-token': 'good' } }), res);
+
+  assert.equal(res.statusCode, 403);
+  // A cached 403 would outlive the access grant that fixes it.
+  assert.equal(res.headers['Cache-Control'], undefined);
+});
