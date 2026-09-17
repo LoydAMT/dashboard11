@@ -6,6 +6,7 @@ import { isRawRange } from '../lib/ranges'
 import { KWH_TAG_KEY } from '../lib/kwh'
 import { fetchRtdbRest, quoted } from '../lib/restdb'
 import { loadCachedRows, saveCachedRows } from '../lib/historyCache'
+import { fetchArchiveRows, archiveConfigured } from '../lib/archiveApi'
 
 // Bounds each raw backfill request. Firebase does not hard-cap how many
 // children a query can return, but asking for a quarter million rows - the
@@ -193,6 +194,32 @@ export function useSeriesHistory(tags, range, deviceId, enabled = true) {
             saveCachedRows(slot, rows)
           }
 
+      // Rows from the Firestore archive, for the part of the window RTDB no
+      // longer holds. Deliberately does NOT overwrite a minute already
+      // present: RTDB is the live source of truth and the archive is a copy
+      // of it, so where both have the same minute they agree - but this way
+      // precedence does not depend on which request happens to resolve
+      // first.
+      const absorbArchive = (archiveRows) => {
+        let added = 0
+        for (const r of archiveRows || []) {
+          const t = Number(r?.t)
+          if (!Number.isFinite(t) || rowsByTime.has(t)) continue
+          rowsByTime.set(t, {
+            t,
+            min: numOr(r.min, r.avg),
+            max: numOr(r.max, r.avg),
+            avg: numOr(r.avg, null),
+            n: typeof r.n === 'number' ? r.n : 1,
+          })
+          added += 1
+        }
+        if (added === 0) return
+        const rows = [...rowsByTime.values()].sort((a, b) => a.t - b.t)
+        setStore((prev) => ({ ...prev, [slot]: { rows, error: null } }))
+        saveCachedRows(slot, rows)
+      }
+
       const fail = (error) => {
         if (sub.cancelled) return
         setStore((prev) => ({ ...prev, [slot]: { rows: [], error } }))
@@ -226,6 +253,31 @@ export function useSeriesHistory(tags, range, deviceId, enabled = true) {
             absorb(val)
           })
           .catch(fail)
+
+        // 1b. The same window, from the archive. Once an hour has been
+        // archived to Firestore the device deletes it from RTDB, so for any
+        // window reaching back past that point the query above returns only
+        // the recent tail and this is what supplies the rest. Rollups only:
+        // raw samples are never archived (they have their own short RTDB
+        // retention and were never meant to outlive it).
+        //
+        // A failure here is logged rather than routed to `fail`, on purpose:
+        // `fail` clears the series, which would throw away perfectly good
+        // RTDB rows because a supplementary source was unavailable. The
+        // visible result of an archive outage is therefore a chart that
+        // stops where RTDB stops - the same thing it did before any of this
+        // existed - not an empty one.
+        if (archiveConfigured()) {
+          fetchArchiveRows(deviceId, key, backfillSince, Date.now())
+            .then((rows) => {
+              if (sub.cancelled) return
+              absorbArchive(rows)
+            })
+            .catch((error) => {
+              if (sub.cancelled) return
+              console.warn(`archive history unavailable for ${key}; showing RTDB range only`, error)
+            })
+        }
       }
 
       // 2. Follow its leading edge.

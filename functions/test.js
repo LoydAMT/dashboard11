@@ -278,3 +278,199 @@ test('a Firestore write failure surfaces as 500, not 200, so the device retries'
 
   assert.equal(res.statusCode, 500);
 });
+
+// =====================================================================
+//  readArchive - the read side (see readArchive.js)
+// =====================================================================
+
+const { createHandler: createReadHandler, validateQuery } = require('./readArchive');
+
+const UID = 'test-uid-123';
+
+function makeReadReq({ method = 'GET', query = {}, headers = {} } = {}) {
+  return { method, query, headers };
+}
+
+function makeReadRes() {
+  return {
+    statusCode: null,
+    body: null,
+    headers: {},
+    sent: null,
+    set(k, v) {
+      this.headers[k] = v;
+      return this;
+    },
+    status(code) {
+      this.statusCode = code;
+      return this;
+    },
+    json(payload) {
+      this.body = payload;
+      return this;
+    },
+    send(payload) {
+      this.sent = payload;
+      return this;
+    },
+  };
+}
+
+// Defaults represent the happy path; each test overrides just the piece it
+// is actually exercising.
+function makeReadHandler(overrides = {}) {
+  const calls = { getArchiveDocs: 0 };
+  const handler = createReadHandler({
+    verifyToken: overrides.verifyToken
+      || (async () => ({ uid: UID, signInProvider: 'password' })),
+    hasAccess: overrides.hasAccess || (async () => true),
+    getArchiveDocs: overrides.getArchiveDocs
+      || (async () => {
+        calls.getArchiveDocs += 1;
+        return [{ samples: [{ t: HOUR + 60000, min: 1, avg: 2, max: 3, n: 60 }] }];
+      }),
+  });
+  return { handler, calls };
+}
+
+const okQuery = () => ({
+  device: 'wecon3',
+  tag: 'Current',
+  from: String(HOUR),
+  to: String(HOUR + 3600000 - 1),
+});
+
+test('readArchive: valid authorized request returns rows in the dashboard row shape', async () => {
+  const { handler } = makeReadHandler({
+    getArchiveDocs: async () => [
+      { samples: [{ t: HOUR + 120000, min: 5, avg: 6, max: 7, n: 60 }] },
+      { samples: [{ t: HOUR + 60000, min: 1, avg: 2, max: 3, n: 60 }] },
+    ],
+  });
+  const res = makeReadRes();
+  await handler(makeReadReq({ query: okQuery(), headers: { 'x-id-token': 'good' } }), res);
+
+  assert.equal(res.statusCode, 200);
+  assert.equal(res.body.device, 'wecon3');
+  assert.equal(res.body.tag, 'Current');
+  // Sorted by t regardless of what order the documents came back in.
+  assert.deepEqual(res.body.rows, [
+    { t: HOUR + 60000, min: 1, avg: 2, max: 3, n: 60 },
+    { t: HOUR + 120000, min: 5, avg: 6, max: 7, n: 60 },
+  ]);
+});
+
+test('readArchive: samples outside the requested window are clipped out', async () => {
+  const { handler } = makeReadHandler({
+    getArchiveDocs: async () => [
+      {
+        samples: [
+          { t: HOUR - 60000, min: 9, avg: 9, max: 9, n: 60 },      // before `from`
+          { t: HOUR + 60000, min: 1, avg: 2, max: 3, n: 60 },      // in window
+          { t: HOUR + 3600000 + 60000, min: 8, avg: 8, max: 8, n: 60 }, // after `to`
+        ],
+      },
+    ],
+  });
+  const res = makeReadRes();
+  await handler(makeReadReq({ query: okQuery(), headers: { 'x-id-token': 'good' } }), res);
+
+  assert.equal(res.statusCode, 200);
+  assert.equal(res.body.rows.length, 1);
+  assert.equal(res.body.rows[0].t, HOUR + 60000);
+});
+
+test('readArchive: missing id token is rejected with 401 and never reads Firestore', async () => {
+  const { handler, calls } = makeReadHandler();
+  const res = makeReadRes();
+  await handler(makeReadReq({ query: okQuery() }), res);
+
+  assert.equal(res.statusCode, 401);
+  assert.equal(calls.getArchiveDocs, 0);
+});
+
+test('readArchive: an unverifiable token is rejected with 401 and never reads Firestore', async () => {
+  const { handler, calls } = makeReadHandler({
+    verifyToken: async () => {
+      throw new Error('bad signature');
+    },
+  });
+  const res = makeReadRes();
+  await handler(makeReadReq({ query: okQuery(), headers: { 'x-id-token': 'forged' } }), res);
+
+  assert.equal(res.statusCode, 401);
+  assert.equal(calls.getArchiveDocs, 0);
+});
+
+test('readArchive: an anonymous sign-in is rejected with 403, matching the RTDB rule', async () => {
+  const { handler, calls } = makeReadHandler({
+    verifyToken: async () => ({ uid: UID, signInProvider: 'anonymous' }),
+  });
+  const res = makeReadRes();
+  await handler(makeReadReq({ query: okQuery(), headers: { 'x-id-token': 'anon' } }), res);
+
+  assert.equal(res.statusCode, 403);
+  assert.equal(calls.getArchiveDocs, 0);
+});
+
+test('readArchive: a signed-in user without access to THIS device gets 403 and no data', async () => {
+  const { handler, calls } = makeReadHandler({ hasAccess: async () => false });
+  const res = makeReadRes();
+  await handler(makeReadReq({ query: okQuery(), headers: { 'x-id-token': 'good' } }), res);
+
+  assert.equal(res.statusCode, 403);
+  assert.equal(res.body.rows, undefined);
+  assert.equal(calls.getArchiveDocs, 0, 'must not touch Firestore before the access check passes');
+});
+
+test('readArchive: bad or missing parameters are rejected with 400', async () => {
+  const cases = [
+    { name: 'no device', query: { tag: 'Current', from: String(HOUR), to: String(HOUR + 1) } },
+    { name: 'no tag', query: { device: 'wecon3', from: String(HOUR), to: String(HOUR + 1) } },
+    { name: 'non-numeric from', query: { device: 'wecon3', tag: 'Current', from: 'abc', to: String(HOUR) } },
+    { name: 'to before from', query: { device: 'wecon3', tag: 'Current', from: String(HOUR), to: String(HOUR - 3600000) } },
+    {
+      name: 'range wider than MAX_HOURS',
+      query: { device: 'wecon3', tag: 'Current', from: String(HOUR), to: String(HOUR + 801 * 3600000) },
+    },
+  ];
+
+  for (const { name, query } of cases) {
+    const { handler, calls } = makeReadHandler();
+    const res = makeReadRes();
+    await handler(makeReadReq({ query, headers: { 'x-id-token': 'good' } }), res);
+    assert.equal(res.statusCode, 400, `expected 400 for case: ${name}`);
+    assert.equal(calls.getArchiveDocs, 0, `must not read Firestore for case: ${name}`);
+  }
+});
+
+test('readArchive: a CORS preflight is answered without requiring a token', async () => {
+  const { handler } = makeReadHandler();
+  const res = makeReadRes();
+  await handler(makeReadReq({ method: 'OPTIONS' }), res);
+
+  assert.equal(res.statusCode, 204);
+  assert.equal(res.headers['Access-Control-Allow-Origin'], '*');
+  assert.ok(res.headers['Access-Control-Allow-Headers'].includes('X-Id-Token'));
+});
+
+test('readArchive: a Firestore failure surfaces as 500, not as an empty-but-successful result', async () => {
+  const { handler } = makeReadHandler({
+    getArchiveDocs: async () => {
+      throw new Error('simulated firestore failure');
+    },
+  });
+  const res = makeReadRes();
+  await handler(makeReadReq({ query: okQuery(), headers: { 'x-id-token': 'good' } }), res);
+
+  assert.equal(res.statusCode, 500);
+  // An empty 200 would read downstream as "this window genuinely has no
+  // history", silently drawing a gap instead of reporting a fault.
+  assert.notEqual(res.statusCode, 200);
+});
+
+test('readArchive: validateQuery expands the window into whole hour buckets', () => {
+  const v = validateQuery({ device: 'd', tag: 't', from: String(HOUR), to: String(HOUR + 2 * 3600000) });
+  assert.equal(v.ok, true);
+  assert.deepEqual(v.hours, [HOUR, HOUR + 3600000, HOUR + 2 * 3600000]);
+});
