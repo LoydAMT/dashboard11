@@ -544,3 +544,136 @@ test('readArchive: a refused request does not get a caching header at all', asyn
   // A cached 403 would outlive the access grant that fixes it.
   assert.equal(res.headers['Cache-Control'], undefined);
 });
+
+// --- archiveSweep: scheduled server-side archive + prune ---------------
+//
+// This one DELETES data, so the tests are mostly about what must never
+// happen: never prune an hour Firestore has not confirmed, never advance a
+// watermark past an hour that failed, never touch the recent window the
+// charts read live.
+
+const { createSweep, toTuples } = require('./archiveSweep');
+
+const H = 3600000;
+const NOW = Math.floor(Date.now() / H) * H + 1800000;   // mid-hour, deterministic
+
+function makeSweepEnv(overrides = {}) {
+  // Six hours of rollups, oldest 200h back, so there is a real backlog.
+  const oldest = Math.floor(NOW / H) * H - 200 * H;
+  const calls = { archived: [], deleted: [], stateWrites: [] };
+  const state = { value: overrides.initialState ?? null };
+
+  const env = {
+    devices: overrides.devices || ['devA'],
+    now: () => NOW,
+    keepHours: overrides.keepHours ?? 48,
+    maxArchiveHours: overrides.maxArchiveHours ?? 5,
+    maxPruneHours: overrides.maxPruneHours ?? 5,
+    readTagKeys: overrides.readTagKeys || (async () => ['Current']),
+    readOldestRollupHour: overrides.readOldestRollupHour || (async () => oldest),
+    readHourRollups:
+      overrides.readHourRollups
+      || (async (_d, _t, hour) => ({ [String(hour + 60000)]: { min: 1, avg: 2, max: 3, n: 60 } })),
+    writeArchiveHour:
+      overrides.writeArchiveHour
+      || (async (device, hour) => { calls.archived.push(hour); return 1; }),
+    deleteHourRollups:
+      overrides.deleteHourRollups
+      || (async (_d, _t, hour) => { calls.deleted.push(hour); return 60; }),
+    readState: async () => state.value,
+    writeState: async (_d, s) => { state.value = s; calls.stateWrites.push({ ...s }); },
+  };
+  return { sweep: createSweep(env), calls, state, oldest };
+}
+
+test('archiveSweep: never prunes an hour it has not archived', async () => {
+  const { sweep, calls } = makeSweepEnv({ maxArchiveHours: 3, maxPruneHours: 99 });
+  await sweep();
+
+  assert.equal(calls.archived.length, 3);
+  // Pruning is capped by arHour, so it can never outrun the archive even
+  // with a generous prune budget. This is THE safety property.
+  assert.ok(calls.deleted.length <= calls.archived.length);
+  for (const h of calls.deleted) {
+    assert.ok(calls.archived.includes(h), `pruned ${h} without archiving it`);
+  }
+});
+
+test('archiveSweep: leaves the recent keepHours window in RTDB for live charts', async () => {
+  const { sweep, calls } = makeSweepEnv({ maxArchiveHours: 500, maxPruneHours: 500, keepHours: 48 });
+  await sweep();
+
+  const cutoff = Math.floor(NOW / H) * H - 48 * H;
+  for (const h of calls.deleted) {
+    assert.ok(h < cutoff, `pruned ${h}, inside the ${48}h live window`);
+  }
+});
+
+test('archiveSweep: a failed read does NOT advance the watermark past that hour', async () => {
+  let n = 0;
+  const { sweep, calls, state } = makeSweepEnv({
+    maxArchiveHours: 10,
+    readHourRollups: async (_d, _t, hour) => {
+      n += 1;
+      if (n === 3) throw new Error('simulated RTDB read failure');
+      return { [String(hour + 60000)]: { min: 1, avg: 2, max: 3, n: 60 } };
+    },
+  });
+  const [res] = await sweep();
+
+  assert.match(res.error, /simulated RTDB read failure/);
+  // Two hours completed before the failure; the third did not, so the
+  // watermark must still be sitting on hour two.
+  assert.equal(res.archived, 2);
+  assert.equal(state.value.arHour, calls.archived[1]);
+  // And progress that DID complete is saved, not thrown away.
+  assert.equal(calls.stateWrites.length, 1);
+});
+
+test('archiveSweep: resumes from the stored watermark instead of restarting', async () => {
+  const base = Math.floor(NOW / H) * H - 100 * H;
+  const { sweep, calls } = makeSweepEnv({
+    initialState: { arHour: base, rpHour: base },
+    maxArchiveHours: 2,
+  });
+  await sweep();
+
+  assert.deepEqual(calls.archived, [base + H, base + 2 * H]);
+});
+
+test('archiveSweep: an hour with no rollups is skipped but still advances', async () => {
+  const { sweep, calls, state } = makeSweepEnv({
+    maxArchiveHours: 4,
+    readHourRollups: async () => ({}),     // every hour empty
+  });
+  const [res] = await sweep();
+
+  assert.equal(res.archived, 4);
+  assert.equal(calls.archived.length, 0);  // nothing written
+  assert.ok(state.value.arHour > 0);       // but it moved on
+});
+
+test('archiveSweep: one device failing does not stop the others', async () => {
+  const { sweep } = makeSweepEnv({
+    devices: ['devA', 'devB'],
+    readTagKeys: async (d) => {
+      if (d === 'devA') throw new Error('devA unreachable');
+      return ['Current'];
+    },
+  });
+  const results = await sweep();
+  assert.equal(results.length, 2);
+  assert.equal(results[1].device, 'devB');
+});
+
+test('archiveSweep: toTuples ignores the sibling raw subtree and malformed rows', () => {
+  const tuples = toTuples({
+    '1700000000000': { min: 1, avg: 2, max: 3, n: 60 },
+    raw: { '1700000000001': 5 },                       // the raw/ sibling
+    '1700000060000': { min: 1, avg: 'x', max: 3, n: 1 }, // malformed
+    '1700000120000': { min: 4, avg: 5, max: 6, n: 30 },
+  });
+  assert.equal(tuples.length, 2);
+  assert.deepEqual(tuples[0], [1700000000000, 1, 2, 3, 60]);
+  assert.ok(tuples[0][0] < tuples[1][0]);   // sorted
+});
