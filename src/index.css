@@ -1747,3 +1747,18 @@ body {
 .cell-breach-hi { background: var(--alarm-hi-bg); color: var(--alarm-hi); font-weight: 650; }
 .cell-breach-lo { background: var(--alarm-lo-bg); color: var(--alarm-lo); font-weight: 650; }
 .cell-spike { background: var(--stale-bg); color: var(--stale); font-weight: 650; }
+
+/* Company grouping in the device picker. Only rendered when an account
+   belongs to at least one company - an admin, whose access comes from
+   admins/ rather than membership, still sees the flat list above. */
+.device-picker-group { margin-top: 1rem; }
+.device-picker-group:first-of-type { margin-top: 0.5rem; }
+
+.device-picker-group-name {
+  margin: 0 0 0.4rem;
+  font-size: 0.78rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted);
+}

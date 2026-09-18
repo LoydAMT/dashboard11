@@ -2,6 +2,7 @@
 
 const { onRequest } = require('firebase-functions/v2/https');
 const { onSchedule } = require('firebase-functions/v2/scheduler');
+const { onValueWritten } = require('firebase-functions/v2/database');
 const { defineSecret } = require('firebase-functions/params');
 const { initializeApp, getApps } = require('firebase-admin/app');
 const { getFirestore, FieldValue } = require('firebase-admin/firestore');
@@ -11,6 +12,7 @@ const { getAuth } = require('firebase-admin/auth');
 const { createHandler, tupleToSampleMap } = require('./archiveRollups');
 const { createHandler: createReadHandler } = require('./readArchive');
 const { createSweep, hourOf, HOUR_MS } = require('./archiveSweep');
+const { computeProjection, toUpdates } = require('./projectCompanyAccess');
 
 if (getApps().length === 0) {
   initializeApp();
@@ -204,4 +206,103 @@ exports.archiveSweep = onSchedule(
       console.log(`archiveSweep: ${JSON.stringify(r)}`);
     }
   }
+);
+
+// Keeps the flat access nodes in step with companies/.
+//
+// Fires on any write under companies/ and recomputes the WHOLE projection -
+// not a delta. See projectCompanyAccess.js for why a delta is the wrong
+// shape for something that has to revoke correctly.
+async function recomputeCompanyAccess() {
+  {
+    const rtdb = getDatabase();
+
+    const [companiesSnap, membersSnap, adminsSnap, accessSnap] = await Promise.all([
+      rtdb.ref('companies').once('value'),
+      rtdb.ref('companyMembers').once('value'),
+      rtdb.ref('admins').once('value'),
+      rtdb.ref('access').once('value'),
+    ]);
+
+    const companies = companiesSnap.val() || {};
+    const membersByCompany = membersSnap.val() || {};
+    const adminUids = Object.keys(adminsSnap.val() || {});
+    const accessNow = accessSnap.val() || {};
+
+    // Membership lives in its own node (see database.rules.json for why),
+    // so stitch it back on before projecting. computeProjection stays a
+    // pure function over one shape and does not need to know about the
+    // split.
+    for (const [companyId, company] of Object.entries(companies)) {
+      if (company && typeof company === 'object') {
+        company.members = membersByCompany[companyId] || {};
+      }
+    }
+
+    // Safety valve. An empty companies/ node would otherwise project to
+    // "nobody has access to anything" and revoke the entire fleet in one
+    // write. That is never a legitimate state to act on - if companies/ is
+    // genuinely meant to be emptied, it should be done deliberately, not as
+    // a side effect of a bad edit or a partially-applied migration.
+    if (Object.keys(companies).length === 0) {
+      console.warn('projectCompanyAccess: companies/ is empty - refusing to revoke everything');
+      return;
+    }
+
+    // Devices to consider: those named by a company, plus any a uid is
+    // currently indexed against. Without the second set, a device removed
+    // from every company would keep its old grant list forever.
+    const knownDevices = new Set();
+    for (const c of Object.values(companies)) {
+      for (const d of Object.keys((c && c.devices) || {})) knownDevices.add(d);
+    }
+    for (const devs of Object.values(accessNow)) {
+      for (const d of Object.keys(devs || {})) knownDevices.add(d);
+    }
+
+    const existingGrants = {};
+    await Promise.all([...knownDevices].map(async (d) => {
+      const [v, o] = await Promise.all([
+        rtdb.ref(`devices/${d}/viewers`).once('value'),
+        rtdb.ref(`devices/${d}/operators`).once('value'),
+      ]);
+      existingGrants[d] = { viewers: v.val() || {}, operators: o.val() || {} };
+    }));
+
+    const projection = computeProjection({
+      companies,
+      adminUids,
+      existing: { deviceGrants: existingGrants, access: accessNow },
+    });
+    // Ensure every previously-known device is represented so it can be cleared.
+    for (const d of knownDevices) {
+      projection.deviceGrants[d] = projection.deviceGrants[d] || { viewers: {}, operators: {} };
+    }
+
+    const updates = toUpdates(projection, { knownUids: Object.keys(accessNow) });
+    await rtdb.ref().update(updates);
+
+    console.log(`projectCompanyAccess: ${Object.keys(companies).length} companies -> ` +
+      `${knownDevices.size} devices, ${Object.keys(projection.access).length} accounts`);
+  }
+}
+
+// Two triggers, one body. A company's device list and its member list live
+// in separate nodes (see database.rules.json), and a change to either must
+// re-project - adding a member is exactly as much an access change as
+// adding a device.
+const TRIGGER_OPTS = {
+  instance: 'testononlinedb-default-rtdb',
+  region: 'asia-southeast1',
+  maxInstances: 1,   // serialise: two concurrent recomputes would race
+};
+
+exports.projectCompanyAccess = onValueWritten(
+  { ...TRIGGER_OPTS, ref: '/companies/{companyId}' },
+  recomputeCompanyAccess,
+);
+
+exports.projectCompanyMembers = onValueWritten(
+  { ...TRIGGER_OPTS, ref: '/companyMembers/{companyId}' },
+  recomputeCompanyAccess,
 );

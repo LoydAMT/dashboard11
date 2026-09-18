@@ -2,6 +2,7 @@ import { lazy, Suspense, useMemo, useState } from 'react'
 import { missingConfig } from './firebase'
 import { useAuth } from './hooks/useAuth'
 import { useDeviceAccess } from './hooks/useDeviceAccess'
+import { useCompanies } from './hooks/useCompanies'
 import { useIsAdmin } from './hooks/useIsAdmin'
 import { useDeviceName } from './hooks/useDeviceName'
 import { useConnection } from './hooks/useConnection'
@@ -70,6 +71,10 @@ function Dashboard() {
   // database.rules.json). Only ever asked for once there is a real identity
   // to ask it about.
   const deviceAccess = useDeviceAccess(realUser ? user : null)
+  // Grouping only. deviceAccess stays the authoritative list of what this
+  // account may open; companies just decide how those devices are arranged
+  // on the picker. An admin belongs to no company and sees a flat list.
+  const companies = useCompanies(realUser ? user : null)
 
   const [chosenDeviceId, setChosenDeviceId] = useState(null)
 
@@ -330,7 +335,11 @@ function Dashboard() {
       )}
 
       {resolved && realUser && !deviceAccess.loading && deviceAccess.devices.length > 1 && !deviceId && (
-        <DevicePicker devices={deviceAccess.devices} onSelect={setChosenDeviceId} />
+        <DevicePicker
+          devices={deviceAccess.devices}
+          companyIds={companies.companyIds}
+          onSelect={setChosenDeviceId}
+        />
       )}
 
       {ready && (

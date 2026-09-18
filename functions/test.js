@@ -677,3 +677,118 @@ test('archiveSweep: toTuples ignores the sibling raw subtree and malformed rows'
   assert.deepEqual(tuples[0], [1700000000000, 1, 2, 3, 60]);
   assert.ok(tuples[0][0] < tuples[1][0]);   // sorted
 });
+
+// --- projectCompanyAccess: companies -> the flat nodes rules can read ----
+//
+// This code grants and revokes access, so the tests are about the failure
+// modes that matter: never silently keep a revoked grant, never lock out an
+// admin, and never downgrade someone who holds operator elsewhere.
+
+const { computeProjection, toUpdates } = require('./projectCompanyAccess');
+
+const KHENT = 'khent-uid';
+const ALICE = 'alice-uid';
+const BOB = 'bob-uid';
+
+test('projectCompanyAccess: members get their company\'s devices, nobody else\'s', () => {
+  const p = computeProjection({
+    companies: {
+      c1: { devices: { RHW01: true }, members: { [ALICE]: 'viewer' } },
+      c2: { devices: { wecon2: true }, members: { [BOB]: 'operator' } },
+    },
+  });
+
+  assert.deepEqual(Object.keys(p.deviceGrants.RHW01.viewers), [ALICE]);
+  assert.deepEqual(Object.keys(p.deviceGrants.wecon2.operators), [BOB]);
+  // Alice must not appear on wecon2 at all.
+  assert.equal(p.deviceGrants.wecon2.viewers[ALICE], undefined);
+  assert.equal(p.access[ALICE].wecon2, undefined);
+});
+
+test('projectCompanyAccess: operator wins when two companies grant the same device', () => {
+  const p = computeProjection({
+    companies: {
+      c1: { devices: { RHW01: true }, members: { [ALICE]: 'viewer' } },
+      c2: { devices: { RHW01: true }, members: { [ALICE]: 'operator' } },
+    },
+  });
+  assert.equal(p.deviceGrants.RHW01.operators[ALICE], true);
+  // and must NOT also sit in viewers, which would be contradictory state
+  assert.equal(p.deviceGrants.RHW01.viewers[ALICE], undefined);
+  assert.equal(p.access[ALICE].RHW01, 'operator');
+});
+
+test('projectCompanyAccess: removing a member actually revokes - the whole point', () => {
+  const before = computeProjection({
+    companies: { c1: { devices: { RHW01: true }, members: { [ALICE]: 'viewer', [BOB]: 'viewer' } } },
+  });
+  assert.equal(before.deviceGrants.RHW01.viewers[BOB], true);
+
+  const after = computeProjection({
+    companies: { c1: { devices: { RHW01: true }, members: { [ALICE]: 'viewer' } } },
+  });
+  assert.equal(after.deviceGrants.RHW01.viewers[BOB], undefined);
+
+  // and the flat update must NULL Bob's index, not merely omit it - an
+  // omitted key leaves the old node in place.
+  const up = toUpdates(after, { knownUids: [ALICE, BOB] });
+  assert.equal(up[`access/${BOB}`], null);
+  assert.equal(up[`userCompanies/${BOB}`], null);
+  assert.deepEqual(up[`access/${ALICE}`], { RHW01: 'viewer' });
+});
+
+test('projectCompanyAccess: a company losing every member clears the device lists', () => {
+  const p = computeProjection({ companies: { c1: { devices: { RHW01: true }, members: {} } } });
+  const up = toUpdates(p);
+  assert.equal(up['devices/RHW01/viewers'], null);
+  assert.equal(up['devices/RHW01/operators'], null);
+});
+
+test('projectCompanyAccess: an admin is never removed by a company edit', () => {
+  // Khent holds an operator grant on RHW01 but belongs to no company.
+  const p = computeProjection({
+    companies: { c1: { devices: { RHW01: true }, members: { [ALICE]: 'viewer' } } },
+    adminUids: [KHENT],
+    existing: {
+      deviceGrants: { RHW01: { viewers: {}, operators: { [KHENT]: true } } },
+      access: { [KHENT]: { RHW01: 'operator', wecon2: 'operator' } },
+    },
+  });
+
+  assert.equal(p.deviceGrants.RHW01.operators[KHENT], true, 'admin was dropped');
+  assert.equal(p.access[KHENT].wecon2, 'operator', 'admin index was dropped');
+  // Alice is unaffected
+  assert.equal(p.deviceGrants.RHW01.viewers[ALICE], true);
+});
+
+test('projectCompanyAccess: a NON-admin in existing state is NOT preserved', () => {
+  // The mirror image of the test above: preservation must apply only to
+  // admins, or revocation would never take effect for anyone.
+  const p = computeProjection({
+    companies: { c1: { devices: { RHW01: true }, members: {} } },
+    adminUids: [KHENT],
+    existing: {
+      deviceGrants: { RHW01: { viewers: { [BOB]: true }, operators: {} } },
+      access: { [BOB]: { RHW01: 'viewer' } },
+    },
+  });
+  assert.equal(p.deviceGrants.RHW01.viewers[BOB], undefined);
+  assert.equal(p.access[BOB], undefined);
+});
+
+test('projectCompanyAccess: userCompanies index lists every company a uid belongs to', () => {
+  const p = computeProjection({
+    companies: {
+      c1: { devices: { RHW01: true }, members: { [ALICE]: 'viewer' } },
+      c2: { devices: { wecon2: true }, members: { [ALICE]: 'operator' } },
+    },
+  });
+  assert.deepEqual(Object.keys(p.userCompanies[ALICE]).sort(), ['c1', 'c2']);
+});
+
+test('projectCompanyAccess: malformed company entries are skipped, not thrown on', () => {
+  const p = computeProjection({
+    companies: { good: { devices: { RHW01: true }, members: { [ALICE]: 'viewer' } }, bad: null, alsoBad: 'nope' },
+  });
+  assert.equal(p.deviceGrants.RHW01.viewers[ALICE], true);
+});
