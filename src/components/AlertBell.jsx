@@ -6,8 +6,15 @@ import { formatLocal, formatAgo } from '../lib/time'
  * toast that already faded cannot take with it. Read-only except for
  * "Clear" - the log lives in this browser's localStorage (see lib/alerts.js),
  * not in Firebase, so clearing it here has no effect on anyone else's view.
+ *
+ * IMPORTANT: this panel shows only what THIS BROWSER witnessed while it was
+ * open. Anything that happened overnight, or on someone else's machine, was
+ * never seen by it. The full record lives on the server - "View full
+ * history" below opens it. The distinction is deliberate and is why the
+ * link is offered right where someone would otherwise assume this list is
+ * complete.
  */
-export function AlertBell({ log, onClear, nowMs }) {
+export function AlertBell({ log, onClear, nowMs, onOpenHistory }) {
   const [open, setOpen] = useState(false)
   const [seenAt, setSeenAt] = useState(0)
   const unread = log.filter((e) => e.ts > seenAt).length
@@ -54,6 +61,19 @@ export function AlertBell({ log, onClear, nowMs }) {
                 </li>
               ))}
             </ul>
+          )}
+
+          {onOpenHistory && (
+            <button
+              type="button"
+              className="alert-panel-full"
+              onClick={() => { setOpen(false); onOpenHistory() }}
+            >
+              View full history
+              <span className="alert-panel-full-note">
+                includes alerts raised while nobody was signed in
+              </span>
+            </button>
           )}
         </div>
       )}

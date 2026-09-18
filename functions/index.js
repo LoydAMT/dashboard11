@@ -13,6 +13,7 @@ const { createHandler, tupleToSampleMap } = require('./archiveRollups');
 const { createHandler: createReadHandler } = require('./readArchive');
 const { createSweep, hourOf, HOUR_MS } = require('./archiveSweep');
 const { computeProjection, toUpdates } = require('./projectCompanyAccess');
+const { evaluate: evaluateAlerts, alertId } = require('./alertEngine');
 
 if (getApps().length === 0) {
   initializeApp();
@@ -305,4 +306,156 @@ exports.projectCompanyAccess = onValueWritten(
 exports.projectCompanyMembers = onValueWritten(
   { ...TRIGGER_OPTS, ref: '/companyMembers/{companyId}' },
   recomputeCompanyAccess,
+);
+
+// ---------------------------------------------------------------------------
+//  Alerts
+// ---------------------------------------------------------------------------
+
+// Limits live in RTDB at alertRules/{device}/{tagKey} = { hi, lo }, NOT in
+// devices/{device}/tags. The device rewrites its own tags/ node on every
+// push_meta(), which would erase anything stored alongside it. Rules are
+// server-owned; the box never sees them.
+//
+// A device with no rules still produces offline/online alerts - "the box
+// stopped reporting" needs no configuration and is the alert that matters
+// most when nobody is watching.
+exports.alertSweep = onSchedule(
+  {
+    region: 'asia-southeast1',
+    schedule: 'every 2 minutes',
+    timeZone: 'Etc/UTC',
+    timeoutSeconds: 300,
+    maxInstances: 1,   // state is read-modify-write; two runs would race
+  },
+  async () => {
+    const rtdb = getDatabase();
+    const fs = getFirestore();
+    const now = Date.now();
+    // Look back further than the schedule interval so a late rollup, or a
+    // skipped run, is still picked up. The watermark makes the overlap a
+    // no-op rather than a duplicate.
+    const since = now - 15 * 60000;
+
+    for (const device of SWEEP_DEVICES) {
+      try {
+        const [rulesSnap, tagsSnap, statusSnap, stateDoc] = await Promise.all([
+          rtdb.ref(`alertRules/${device}`).once('value'),
+          rtdb.ref(`devices/${device}/tags`).once('value'),
+          rtdb.ref(`devices/${device}/status`).once('value'),
+          fs.collection('alertState').doc(device).get(),
+        ]);
+
+        const rules = rulesSnap.val() || {};
+        const tagsMeta = tagsSnap.val() || {};
+        const status = statusSnap.val() || {};
+        const prevState = stateDoc.exists ? (stateDoc.data() || {}) : {};
+
+        const tagNames = {};
+        for (const [k, m] of Object.entries(tagsMeta)) tagNames[k] = (m && m.name) || k;
+
+        // Only tags that actually have a rule are worth reading.
+        const byMinute = new Map();
+        for (const tagKey of Object.keys(rules)) {
+          const snap = await rtdb.ref(`devices/${device}/history/${tagKey}`)
+            .orderByKey().startAt(String(since)).endAt('9999999999999').once('value');
+          for (const [minute, r] of Object.entries(snap.val() || {})) {
+            const t = Number(minute);
+            if (!Number.isFinite(t) || !r || typeof r !== 'object') continue;
+            if (!byMinute.has(t)) byMinute.set(t, { minute: t, byTag: {} });
+            byMinute.get(t).byTag[tagKey] = r;
+          }
+        }
+        const windows = [...byMinute.values()].sort((a, b) => a.minute - b.minute);
+
+        const { events, state } = evaluateAlerts({
+          device, windows, rules, tagNames, prevState, status, now,
+        });
+
+        if (events.length > 0) {
+          const batch = fs.batch();
+          for (const ev of events) {
+            const ref = fs.collection('devices').doc(device)
+              .collection('alerts').doc(alertId(ev));
+            // Deterministic id + set(): a re-run over the same window
+            // overwrites with identical content instead of appending a
+            // second copy of the same event.
+            batch.set(ref, { ...ev, recordedAt: FieldValue.serverTimestamp() });
+          }
+          await batch.commit();
+        }
+
+        // State is written AFTER the alerts, so a crash in between re-runs
+        // the same window and re-writes the same deterministic ids rather
+        // than losing the events entirely.
+        await fs.collection('alertState').doc(device).set(state, { merge: true });
+
+        if (events.length > 0) {
+          console.log(`alertSweep: ${device} -> ${events.length} event(s): ` +
+            events.map((e) => e.kind).join(', '));
+        }
+      } catch (err) {
+        // One device failing must not stop the rest.
+        console.error(`alertSweep: ${device} failed`, err);
+      }
+    }
+  }
+);
+
+// Read side for the alert history. Same authorization as readArchive - the
+// alert log says as much about a site as its telemetry does, so it gets the
+// same per-device check, not a weaker one.
+exports.readAlerts = onRequest(
+  { region: 'asia-southeast1' },
+  async (req, res) => {
+    res.set('Access-Control-Allow-Origin', '*');
+    res.set('Access-Control-Allow-Headers', 'X-Id-Token, Content-Type');
+    res.set('Access-Control-Allow-Methods', 'GET, OPTIONS');
+    if (req.method === 'OPTIONS') { res.status(204).send(''); return; }
+    if (req.method !== 'GET') { res.status(405).json({ error: 'method not allowed' }); return; }
+
+    // X-Id-Token, not Authorization: Bearer - Cloud Run intercepts the
+    // latter and rejects a Firebase ID token before this runs. See the note
+    // in readArchive.js.
+    const token = req.headers['x-id-token'];
+    if (typeof token !== 'string' || !token) { res.status(401).json({ error: 'missing id token' }); return; }
+
+    let decoded;
+    try {
+      decoded = await getAuth().verifyIdToken(token);
+    } catch { res.status(401).json({ error: 'invalid token' }); return; }
+    if (!decoded.uid || (decoded.firebase && decoded.firebase.sign_in_provider === 'anonymous')) {
+      res.status(403).json({ error: 'forbidden' }); return;
+    }
+
+    const device = req.query.device;
+    if (typeof device !== 'string' || !device) { res.status(400).json({ error: 'device required' }); return; }
+
+    const rtdb = getDatabase();
+    const [viewer, operator, admin] = await Promise.all([
+      rtdb.ref(`devices/${device}/viewers/${decoded.uid}`).once('value'),
+      rtdb.ref(`devices/${device}/operators/${decoded.uid}`).once('value'),
+      rtdb.ref(`admins/${decoded.uid}`).once('value'),
+    ]);
+    if (!(viewer.val() === true || operator.val() === true || admin.val() === true)) {
+      res.status(403).json({ error: 'forbidden' }); return;
+    }
+
+    const limit = Math.min(500, Math.max(1, Number(req.query.limit) || 200));
+    const before = Number(req.query.before);
+
+    let q = getFirestore().collection('devices').doc(device).collection('alerts')
+      .orderBy('ts', 'desc');
+    // Cursor paging rather than offset: "show me the next page" must not
+    // get slower the further back you scroll.
+    if (Number.isFinite(before)) q = q.where('ts', '<', before);
+
+    const snap = await q.limit(limit).get();
+    const alerts = snap.docs.map((d) => ({ id: d.id, ...d.data(), recordedAt: undefined }));
+
+    // Not cacheable: new alerts can land at any moment, and a stale alert
+    // list is worse than a slow one.
+    res.set('Cache-Control', 'no-store');
+    res.status(200).json({ device, alerts, hasMore: alerts.length === limit });
+  }
 );

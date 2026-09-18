@@ -33,6 +33,7 @@ import { NamingPage } from './components/NamingPage'
 import { ThemeToggle } from './components/ThemeToggle'
 import { AlertToasts } from './components/AlertToasts'
 import { AlertBell } from './components/AlertBell'
+import { AlertHistory } from './components/AlertHistory'
 import { signOutUser } from './auth'
 
 // Recharts is by far the heaviest thing in the bundle and none of it is needed
@@ -77,6 +78,11 @@ function Dashboard() {
   const companies = useCompanies(realUser ? user : null)
 
   const [chosenDeviceId, setChosenDeviceId] = useState(null)
+
+  // The server-side alert log, shown in place of the dashboard body rather
+  // than as an overlay: it is something you sit and read through, not
+  // something you glance at over the top of a live chart.
+  const [showAlertHistory, setShowAlertHistory] = useState(false)
 
   // Auto-select the common case (exactly one device) without ever showing a
   // picker for it. A previously chosen device that has fallen out of the
@@ -307,6 +313,7 @@ function Dashboard() {
         onSwitchDevice={() => setChosenDeviceId(null)}
         alertLog={ready ? alertCenter.log : EMPTY_LOG}
         onClearAlerts={alertCenter.clearLog}
+        onOpenHistory={() => setShowAlertHistory(true)}
         nowMs={now}
       />
 
@@ -342,7 +349,14 @@ function Dashboard() {
         />
       )}
 
-      {ready && (
+      {/* Shown INSTEAD of the dashboard body. The live view keeps running
+          underneath in the sense that its subscriptions are untouched - this
+          is a different thing to look at, not a different mode. */}
+      {ready && showAlertHistory && (
+        <AlertHistory deviceId={deviceId} onClose={() => setShowAlertHistory(false)} />
+      )}
+
+      {ready && !showAlertHistory && (
         <>
         <StatusBanner state={state} status={status.data} />
 
@@ -576,7 +590,7 @@ function Stat({ label, tag, value, live = false }) {
 
 function Masthead({
   deviceName, periodMs, email, onSignOut, theme, onThemeChange,
-  canSwitchDevice, onSwitchDevice, alertLog, onClearAlerts, nowMs,
+  canSwitchDevice, onSwitchDevice, alertLog, onClearAlerts, nowMs, onOpenHistory,
 }) {
   return (
     <header className="masthead">
@@ -606,7 +620,14 @@ function Masthead({
             where there is nothing yet to sign out of. The theme toggle and
             alert bell are gated the same way: nothing to persist a preference
             or an alert log against before then. */}
-        {email && <AlertBell log={alertLog} onClear={onClearAlerts} nowMs={nowMs} />}
+        {email && (
+          <AlertBell
+            log={alertLog}
+            onClear={onClearAlerts}
+            nowMs={nowMs}
+            onOpenHistory={onOpenHistory}
+          />
+        )}
         {email && <ThemeToggle theme={theme} onChange={onThemeChange} />}
         {email && (
           <button type="button" className="signout-btn" onClick={onSignOut} title={email}>

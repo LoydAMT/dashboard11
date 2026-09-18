@@ -1762,3 +1762,69 @@ body {
   text-transform: uppercase;
   color: var(--muted);
 }
+
+/* Server-side alert history. Deliberately plain: this is a log people read
+   top to bottom looking for a specific moment, not a dashboard. */
+.alert-history { padding: 0.5rem 0 2rem; }
+.alert-history-head { display: flex; align-items: baseline; gap: 1rem; }
+.alert-history-head h2 { margin: 0; flex: 1; }
+.alert-history-close,
+.alert-history-more {
+  padding: 0.35rem 0.8rem;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--panel);
+  color: var(--fg);
+  cursor: pointer;
+}
+.alert-history-more { margin-top: 1rem; width: 100%; }
+.alert-history-note { color: var(--muted); font-size: 0.85rem; margin: 0.3rem 0 1rem; }
+.alert-history-empty { color: var(--muted); padding: 1rem 0; }
+
+.alert-history-filters { display: flex; flex-wrap: wrap; gap: 0.4rem; margin-bottom: 1rem; }
+.alert-history-filters button {
+  padding: 0.25rem 0.7rem;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 0.8rem;
+  cursor: pointer;
+}
+.alert-history-filters button.is-active { border-color: var(--accent); color: var(--fg); }
+
+.alert-history-list { list-style: none; margin: 0; padding: 0; }
+.alert-history-item {
+  display: grid;
+  grid-template-columns: 11rem 8rem 1fr auto;
+  gap: 0.75rem;
+  align-items: baseline;
+  padding: 0.5rem 0.6rem;
+  border-bottom: 1px solid var(--border);
+  border-left: 3px solid transparent;
+  font-size: 0.88rem;
+}
+.alert-history-item.level-critical { border-left-color: var(--danger, #e5484d); }
+.alert-history-item.level-warning  { border-left-color: var(--warn, #f5a524); }
+.alert-history-item time { color: var(--muted); font-variant-numeric: tabular-nums; }
+.alert-history-kind { color: var(--muted); font-size: 0.8rem; }
+.alert-history-value { font-variant-numeric: tabular-nums; }
+
+/* At phone width the grid becomes unreadable; stack it. */
+@media (max-width: 720px) {
+  .alert-history-item { grid-template-columns: 1fr; gap: 0.15rem; }
+}
+
+.alert-panel-full {
+  display: block;
+  width: 100%;
+  padding: 0.6rem;
+  border: 0;
+  border-top: 1px solid var(--border);
+  background: transparent;
+  color: var(--accent);
+  text-align: left;
+  cursor: pointer;
+  font-size: 0.85rem;
+}
+.alert-panel-full-note { display: block; color: var(--muted); font-size: 0.75rem; }

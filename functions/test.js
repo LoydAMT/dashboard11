@@ -792,3 +792,130 @@ test('projectCompanyAccess: malformed company entries are skipped, not thrown on
   });
   assert.equal(p.deviceGrants.RHW01.viewers[ALICE], true);
 });
+
+// --- alertEngine: server-side alert detection ---------------------------
+//
+// The properties that matter for a record people will rely on: fire on
+// transitions only, catch a spike that lasts seconds, never duplicate, and
+// notice a box that has gone quiet.
+
+const { evaluate, classify, alertId } = require('./alertEngine');
+
+const M = 60000;
+const T0 = 1789700000000 - (1789700000000 % M);
+const win = (minute, tag, r) => ({ minute, byTag: { [tag]: r } });
+
+test('alertEngine: fires once on the transition, not every minute it stays high', () => {
+  const rules = { Current: { hi: 10 } };
+  const windows = [
+    win(T0 + 0 * M, 'Current', { min: 1, avg: 2, max: 3, n: 60 }),
+    win(T0 + 1 * M, 'Current', { min: 9, avg: 11, max: 14, n: 60 }),   // goes high
+    win(T0 + 2 * M, 'Current', { min: 10, avg: 12, max: 15, n: 60 }),  // stays high
+    win(T0 + 3 * M, 'Current', { min: 10, avg: 12, max: 15, n: 60 }),  // stays high
+  ];
+  const { events, state } = evaluate({ device: 'd', windows, rules, status: { lastSeen: T0 + 3 * M } , now: T0 + 3 * M });
+
+  const alarms = events.filter((e) => e.kind === 'alarm-high');
+  assert.equal(alarms.length, 1, 'a sustained alarm must not repeat every minute');
+  assert.equal(alarms[0].ts, T0 + M);
+  assert.equal(state.tags.Current, 'high');
+});
+
+test('alertEngine: clears when the value returns, and can fire again after', () => {
+  const rules = { Current: { hi: 10 } };
+  const windows = [
+    win(T0 + 0 * M, 'Current', { min: 9, avg: 11, max: 14, n: 60 }),   // high
+    win(T0 + 1 * M, 'Current', { min: 1, avg: 2, max: 3, n: 60 }),     // clear
+    win(T0 + 2 * M, 'Current', { min: 9, avg: 11, max: 20, n: 60 }),   // high again
+  ];
+  const { events } = evaluate({ device: 'd', windows, rules, status: { lastSeen: T0 + 2 * M }, now: T0 + 2 * M });
+  assert.deepEqual(events.map((e) => e.kind), ['alarm-high', 'alarm-clear', 'alarm-high']);
+});
+
+test('alertEngine: a two-second excursion inside a minute is still caught', () => {
+  // avg sits comfortably under the limit; only max betrays the spike. This
+  // is why the engine reads rollups rather than polling latest/.
+  const rules = { Current: { hi: 10 } };
+  const windows = [win(T0, 'Current', { min: 1, avg: 2.1, max: 47, n: 60 })];
+  const { events } = evaluate({ device: 'd', windows, rules, status: { lastSeen: T0 }, now: T0 });
+  assert.equal(events.length, 1);
+  assert.equal(events[0].kind, 'alarm-high');
+  assert.equal(events[0].value, 47);
+});
+
+test('alertEngine: low limit uses min, not average', () => {
+  const rules = { Voltage: { lo: 200 } };
+  const windows = [win(T0, 'Voltage', { min: 180, avg: 229, max: 240, n: 60 })];
+  const { events } = evaluate({ device: 'd', windows, rules, status: { lastSeen: T0 }, now: T0 });
+  assert.equal(events[0].kind, 'alarm-low');
+  assert.equal(events[0].value, 180);
+});
+
+test('alertEngine: resuming from stored state does not re-fire an existing alarm', () => {
+  const rules = { Current: { hi: 10 } };
+  const windows = [win(T0 + 5 * M, 'Current', { min: 11, avg: 12, max: 13, n: 60 })];
+  const { events } = evaluate({
+    device: 'd', windows, rules,
+    prevState: { tags: { Current: 'high' }, lastMinute: T0 + 4 * M },
+    status: { lastSeen: T0 + 5 * M }, now: T0 + 5 * M,
+  });
+  assert.equal(events.length, 0, 'already-high tag re-fired after a restart');
+});
+
+test('alertEngine: minutes at or before the watermark are skipped', () => {
+  const rules = { Current: { hi: 10 } };
+  const windows = [
+    win(T0 + 1 * M, 'Current', { min: 11, avg: 12, max: 13, n: 60 }),  // already processed
+    win(T0 + 2 * M, 'Current', { min: 1, avg: 2, max: 3, n: 60 }),
+  ];
+  const { events, state } = evaluate({
+    device: 'd', windows, rules,
+    prevState: { tags: {}, lastMinute: T0 + 1 * M },
+    status: { lastSeen: T0 + 2 * M }, now: T0 + 2 * M,
+  });
+  assert.equal(events.length, 0);
+  assert.equal(state.lastMinute, T0 + 2 * M);
+});
+
+test('alertEngine: a tag with no rule never alerts, however extreme', () => {
+  const windows = [win(T0, 'Current', { min: -9999, avg: 0, max: 9999, n: 60 })];
+  const { events } = evaluate({ device: 'd', windows, rules: {}, status: { lastSeen: T0 }, now: T0 });
+  assert.equal(events.length, 0);
+});
+
+test('alertEngine: notices a box that has gone quiet, and its return', () => {
+  const now = T0 + 10 * M;
+  const down = evaluate({ device: 'd', windows: [], rules: {}, status: { lastSeen: now - 5 * M }, now });
+  assert.equal(down.events.length, 1);
+  assert.equal(down.events[0].kind, 'offline');
+  assert.equal(down.state.offline, true);
+
+  // still down: must not repeat
+  const still = evaluate({
+    device: 'd', windows: [], rules: {},
+    prevState: down.state, status: { lastSeen: now - 6 * M }, now: now + M,
+  });
+  assert.equal(still.events.length, 0, 'offline repeated while still offline');
+
+  const up = evaluate({
+    device: 'd', windows: [], rules: {},
+    prevState: down.state, status: { lastSeen: now + M }, now: now + M,
+  });
+  assert.equal(up.events[0].kind, 'online');
+  assert.equal(up.state.offline, false);
+});
+
+test('alertEngine: alert ids are deterministic so a re-run cannot duplicate', () => {
+  const ev = { ts: T0, tagKey: 'Current', kind: 'alarm-high' };
+  assert.equal(alertId(ev), alertId({ ...ev }));
+  assert.notEqual(alertId(ev), alertId({ ...ev, kind: 'alarm-clear' }));
+  // device-level events have no tag and must still get a stable id
+  assert.equal(alertId({ ts: T0, tagKey: null, kind: 'offline' }), `${T0}__device_offline`);
+});
+
+test('alertEngine: classify needs a rule, and reports unknown rather than ok', () => {
+  assert.equal(classify({ min: 1, avg: 2, max: 3 }, null), 'none');
+  assert.equal(classify({ min: 1, avg: 2, max: 3 }, {}), 'none');
+  assert.equal(classify(null, { hi: 10 }), 'unknown');
+  assert.equal(classify({ min: 1, avg: 2, max: 3 }, { hi: 10 }), 'ok');
+});
