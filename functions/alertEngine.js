@@ -29,6 +29,45 @@
 // rather than a slow cycle.
 const DEFAULT_OFFLINE_AFTER_MS = 60000;
 
+// Spike detection, mirroring src/lib/alerts.js so the browser and the server
+// agree about what counts as one.
+//
+// Without this the server log is nearly always EMPTY: no tag on any device
+// has a limit configured, so alarm-high/low cannot fire, and a healthy box
+// never goes offline. A spike is the only thing most sites will ever record,
+// which makes it the opposite of optional.
+//
+// The client tests each live sample against a trailing buffer of live
+// samples. The server cannot - it sees minute rollups. So it tests the
+// minute's EXTREME (max for a high spike, min for a low one) against a
+// trailing buffer of minute AVERAGES. A two-second excursion still registers,
+// because max carries it; what differs is the baseline's resolution, which is
+// per-minute rather than per-sample.
+const SPIKE_MIN_SAMPLES = 8;
+const SPIKE_Z_THRESHOLD = 4;
+const SPIKE_MIN_DELTA_FRACTION = 0.02;
+const SPIKE_BUFFER_LEN = 30;
+
+/**
+ * Is `value` a spike against `buffer` (minute averages, oldest first)?
+ *
+ * Z_THRESHOLD is deliberately conservative - a plain 2-3 sigma test fires
+ * constantly on ordinary process noise. MIN_DELTA_FRACTION is the fallback
+ * for a near-constant tag, where sd approaches zero and a z-score alone
+ * would call a one-part-in-a-thousand wobble infinitely many deviations out.
+ */
+function isSpike(buffer, value) {
+  if (!Array.isArray(buffer) || buffer.length < SPIKE_MIN_SAMPLES) return false;
+  if (!isNum(value)) return false;
+  const mean = buffer.reduce((a, b) => a + b, 0) / buffer.length;
+  const variance = buffer.reduce((a, b) => a + (b - mean) ** 2, 0) / buffer.length;
+  const sd = Math.sqrt(variance);
+  const delta = Math.abs(value - mean);
+  if (delta < Math.abs(mean) * SPIKE_MIN_DELTA_FRACTION) return false;
+  if (sd === 0) return delta > 0;
+  return delta / sd >= SPIKE_Z_THRESHOLD;
+}
+
 function isNum(v) {
   return typeof v === 'number' && Number.isFinite(v);
 }
@@ -73,12 +112,56 @@ function evaluate({
 }) {
   const events = [];
   const tagState = { ...(prevState.tags || {}) };
+  // Trailing minute-averages per tag, carried across runs so the baseline
+  // survives a restart instead of needing 8 fresh minutes to rebuild.
+  const buffers = { ...(prevState.buffers || {}) };
   let lastMinute = prevState.lastMinute || 0;
 
   const name = (tagKey) => tagNames[tagKey] || tagKey;
 
   for (const w of windows) {
     if (!w || !isNum(w.minute) || w.minute <= lastMinute) continue;
+
+    // Spike test runs on EVERY tag with history, not only those with a
+    // configured limit. A limit is a statement about what is acceptable; a
+    // spike is a statement about what is unusual. Most tags here have the
+    // second and not the first.
+    for (const [tagKey, rollup] of Object.entries(w.byTag || {})) {
+      if (!rollup || !isNum(rollup.avg)) continue;
+      const buf = buffers[tagKey] || [];
+
+      // Suppress the spike when this same minute also breaches a configured
+      // limit: it is one excursion, and reporting it as both a spike and an
+      // alarm is the same event told twice.
+      //
+      // Classified fresh from THIS minute rather than read from tagState.
+      // tagState is only updated by the limit loop further down, so reading
+      // it here would see the previous minute's verdict and let both fire
+      // on the very transition that matters most - which is exactly what
+      // the first version of this did.
+      const cls = classify(rollup, rules[tagKey]);
+      if (cls !== 'high' && cls !== 'low') {
+        const hi = isNum(rollup.max) ? rollup.max : rollup.avg;
+        const lo = isNum(rollup.min) ? rollup.min : rollup.avg;
+        const mean = buf.length ? buf.reduce((a, b) => a + b, 0) / buf.length : 0;
+        // Whichever extreme is further from the established baseline.
+        const extreme = Math.abs(hi - mean) >= Math.abs(lo - mean) ? hi : lo;
+        if (isSpike(buf, extreme)) {
+          events.push({
+            ts: w.minute,
+            device,
+            kind: 'spike',
+            level: 'warning',
+            tagKey,
+            tagName: name(tagKey),
+            value: extreme,
+            message: `${name(tagKey)} jumped well outside its recent range`,
+          });
+        }
+      }
+
+      buffers[tagKey] = [...buf, rollup.avg].slice(-SPIKE_BUFFER_LEN);
+    }
 
     for (const [tagKey, rule] of Object.entries(rules)) {
       const rollup = (w.byTag || {})[tagKey];
@@ -151,7 +234,7 @@ function evaluate({
 
   return {
     events,
-    state: { tags: tagState, offline: offlineNow, lastMinute },
+    state: { tags: tagState, buffers, offline: offlineNow, lastMinute },
   };
 }
 
@@ -164,4 +247,4 @@ function alertId(ev) {
   return `${ev.ts}_${tag}_${ev.kind}`;
 }
 
-module.exports = { evaluate, classify, alertId, DEFAULT_OFFLINE_AFTER_MS };
+module.exports = { evaluate, classify, isSpike, alertId, DEFAULT_OFFLINE_AFTER_MS };

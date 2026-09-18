@@ -354,9 +354,19 @@ exports.alertSweep = onSchedule(
         const tagNames = {};
         for (const [k, m] of Object.entries(tagsMeta)) tagNames[k] = (m && m.name) || k;
 
-        // Only tags that actually have a rule are worth reading.
+        // EVERY tag with history, not only those with a configured limit.
+        // Spike detection needs a baseline for each tag, and limits are the
+        // exception rather than the rule here - reading only ruled tags left
+        // the log empty on a healthy site, which is what was observed after
+        // the first deploy. A tag with no minute rollups (an accumulator, or
+        // a live-only tag) simply returns nothing.
+        const historyTags = Object.entries(tagsMeta)
+          .filter(([, m]) => !m || m.history !== false)
+          .map(([k]) => k);
+        const tagsToRead = [...new Set([...historyTags, ...Object.keys(rules)])];
+
         const byMinute = new Map();
-        for (const tagKey of Object.keys(rules)) {
+        for (const tagKey of tagsToRead) {
           const snap = await rtdb.ref(`devices/${device}/history/${tagKey}`)
             .orderByKey().startAt(String(since)).endAt('9999999999999').once('value');
           for (const [minute, r] of Object.entries(snap.val() || {})) {

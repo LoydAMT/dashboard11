@@ -919,3 +919,88 @@ test('alertEngine: classify needs a rule, and reports unknown rather than ok', (
   assert.equal(classify(null, { hi: 10 }), 'unknown');
   assert.equal(classify({ min: 1, avg: 2, max: 3 }, { hi: 10 }), 'ok');
 });
+
+// --- alertEngine: spike detection ---------------------------------------
+//
+// This is the alert that actually fires in practice. No tag on any device
+// has a limit configured, so without spikes the server log would be empty
+// on a healthy site - which is exactly what was observed after the first
+// deploy.
+
+const { isSpike } = require('./alertEngine');
+
+const flat = (v, n = 12) => Array.from({ length: n }, () => v);
+
+test('alertEngine: a steady tag that jumps is a spike', () => {
+  assert.equal(isSpike(flat(230), 400), true);
+});
+
+test('alertEngine: ordinary noise is not a spike', () => {
+  const noisy = [230, 230.4, 229.6, 230.2, 229.8, 230.1, 229.9, 230.3, 230, 229.7];
+  assert.equal(isSpike(noisy, 230.5), false, 'ordinary wobble must not alert');
+});
+
+test('alertEngine: a tiny wobble on a near-constant tag is not a spike', () => {
+  // sd is ~0 here, so a pure z-score would call any change infinite sigma.
+  // MIN_DELTA_FRACTION is what stops that.
+  assert.equal(isSpike(flat(230), 230.5), false);
+});
+
+test('alertEngine: too short a baseline never spikes', () => {
+  assert.equal(isSpike([230, 230, 230], 999), false, 'fired before a baseline existed');
+});
+
+test('alertEngine: spike fires on rollups and carries the extreme, not the average', () => {
+  const windows = [];
+  const T = T0 + 100 * M;
+  // 10 steady minutes to build a baseline...
+  for (let i = 0; i < 10; i++) {
+    windows.push(win(T + i * M, 'Current', { min: 2, avg: 2, max: 2, n: 60 }));
+  }
+  // ...then a minute whose AVERAGE is unremarkable but whose MAX is not.
+  windows.push(win(T + 10 * M, 'Current', { min: 2, avg: 2.2, max: 40, n: 60 }));
+
+  const { events, state } = evaluate({
+    device: 'd', windows, rules: {},
+    status: { lastSeen: T + 10 * M }, now: T + 10 * M,
+  });
+
+  const spikes = events.filter((e) => e.kind === 'spike');
+  assert.equal(spikes.length, 1);
+  assert.equal(spikes[0].value, 40, 'reported the average instead of the excursion');
+  assert.equal(spikes[0].tagKey, 'Current');
+  assert.ok(state.buffers.Current.length > 0, 'baseline was not carried forward');
+});
+
+test('alertEngine: spike is suppressed while the tag is already in limit alarm', () => {
+  const windows = [];
+  const T = T0 + 200 * M;
+  for (let i = 0; i < 10; i++) {
+    windows.push(win(T + i * M, 'Current', { min: 2, avg: 2, max: 2, n: 60 }));
+  }
+  windows.push(win(T + 10 * M, 'Current', { min: 2, avg: 2.2, max: 40, n: 60 }));
+
+  const { events } = evaluate({
+    device: 'd', windows,
+    rules: { Current: { hi: 10 } },           // the same excursion trips the limit
+    status: { lastSeen: T + 10 * M }, now: T + 10 * M,
+  });
+
+  const kinds = events.map((e) => e.kind);
+  assert.ok(kinds.includes('alarm-high'), 'limit alarm should still fire');
+  assert.equal(kinds.filter((k) => k === 'spike').length, 0,
+    'one excursion must not be reported twice');
+});
+
+test('alertEngine: spike baseline survives a restart via stored state', () => {
+  const T = T0 + 300 * M;
+  const { events } = evaluate({
+    device: 'd',
+    windows: [win(T, 'Current', { min: 2, avg: 2.1, max: 40, n: 60 })],
+    rules: {},
+    prevState: { buffers: { Current: flat(2, 12) }, lastMinute: T - M },
+    status: { lastSeen: T }, now: T,
+  });
+  assert.equal(events.filter((e) => e.kind === 'spike').length, 1,
+    'a restart should not need 8 fresh minutes before it can detect again');
+});
