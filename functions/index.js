@@ -14,6 +14,7 @@ const { createHandler: createReadHandler } = require('./readArchive');
 const { createSweep, hourOf, HOUR_MS } = require('./archiveSweep');
 const { computeProjection, toUpdates } = require('./projectCompanyAccess');
 const { evaluate: evaluateAlerts, alertId } = require('./alertEngine');
+const { buildSnapshot, phDateKey } = require('./kwhSnapshot');
 
 if (getApps().length === 0) {
   initializeApp();
@@ -467,5 +468,70 @@ exports.readAlerts = onRequest(
     // list is worse than a slow one.
     res.set('Cache-Control', 'no-store');
     res.status(200).json({ device, alerts, hasMore: alerts.length === limit });
+  }
+);
+
+// ---------------------------------------------------------------------------
+//  TEMPORARY: daily kWh snapshot at 22:00 Philippine time
+//
+//  A workaround, not a design. The devices publish kWh on a 12-hour
+//  interval, so the value available at 22:00 can be half a day old. This
+//  records the best available reading AND how stale it was, so nothing
+//  downstream mistakes it for a true 22:00 meter read.
+//
+//  The real fix is one config value in the Lua (kWh interval_ms 12h -> 10
+//  min), already applied to the Desktop copies and awaiting a deploy. Once
+//  that is running everywhere, staleMs here drops under ten minutes and
+//  this function can be deleted.
+// ---------------------------------------------------------------------------
+exports.kwhDailySnapshot = onSchedule(
+  {
+    region: 'asia-southeast1',
+    // 22:00 Philippine time. Expressed in Asia/Manila rather than as 14:00
+    // UTC so it stays correct if the schedule is ever read by a human.
+    schedule: '0 22 * * *',
+    timeZone: 'Asia/Manila',
+    timeoutSeconds: 120,
+    maxInstances: 1,
+  },
+  async () => {
+    const rtdb = getDatabase();
+    const fs = getFirestore();
+    const now = Date.now();
+    const dateKey = phDateKey(now);
+
+    for (const device of SWEEP_DEVICES) {
+      try {
+        const [latestSnap, prevSnap] = await Promise.all([
+          rtdb.ref(`devices/${device}/latest/kWh`).once('value'),
+          // Yesterday's record, for the day-over-day delta. Ordered by the
+          // document id, which is the date key, so this is the most recent
+          // snapshot regardless of when it was written.
+          fs.collection('devices').doc(device).collection('kwhDaily')
+            .orderBy('__name__', 'desc').limit(1).get(),
+        ]);
+
+        const previous = prevSnap.empty ? null : prevSnap.docs[0].data();
+        const record = buildSnapshot({
+          device,
+          latest: latestSnap.val(),
+          previous,
+          now,
+        });
+
+        // Document id IS the Philippine date, so a re-run on the same day
+        // overwrites rather than creating a second reading for that day.
+        await fs.collection('devices').doc(device)
+          .collection('kwhDaily').doc(dateKey)
+          .set({ ...record, recordedAt: FieldValue.serverTimestamp() });
+
+        console.log(`kwhDailySnapshot: ${device} ${dateKey} value=${record.value} ` +
+          `stale=${record.staleMs === null ? '?' : Math.round(record.staleMs / 60000) + 'min'} ` +
+          `delta=${record.deltaKwh === null ? 'n/a' : record.deltaKwh.toFixed(3)}` +
+          `${record.resetSuspected ? ' RESET-SUSPECTED' : ''}`);
+      } catch (err) {
+        console.error(`kwhDailySnapshot: ${device} failed`, err);
+      }
+    }
   }
 );

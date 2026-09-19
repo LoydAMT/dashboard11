@@ -1004,3 +1004,82 @@ test('alertEngine: spike baseline survives a restart via stored state', () => {
   assert.equal(events.filter((e) => e.kind === 'spike').length, 1,
     'a restart should not need 8 fresh minutes before it can detect again');
 });
+
+// --- kwhSnapshot: TEMPORARY daily meter reading -------------------------
+//
+// The properties that matter for something a bill might be built on: never
+// report negative usage, never hide how stale the reading was, and put the
+// reading on the right Philippine calendar day.
+
+const { buildSnapshot, phDateKey } = require('./kwhSnapshot');
+
+const AT_2200_PHT = Date.parse('2026-09-19T14:00:00Z');
+
+test('kwhSnapshot: 22:00 PHT lands on that same Philippine day', () => {
+  assert.equal(phDateKey(AT_2200_PHT), '2026-09-19');
+  // 00:30 PHT is the NEXT day even though it is still the 19th in UTC
+  assert.equal(phDateKey(Date.parse('2026-09-19T16:30:00Z')), '2026-09-20');
+  // and 07:00 PHT is still the same day, an hour before UTC rolls over
+  assert.equal(phDateKey(Date.parse('2026-09-19T23:00:00Z')), '2026-09-20');
+});
+
+test('kwhSnapshot: records how stale the reading was', () => {
+  const s = buildSnapshot({
+    device: 'RHW01',
+    latest: { value: 49.6, ts: AT_2200_PHT - 3 * 3600000 },   // 3h old
+    now: AT_2200_PHT,
+  });
+  assert.equal(s.staleMs, 3 * 3600000);
+  assert.match(s.note, /12h kWh interval/);
+});
+
+test('kwhSnapshot: a fresh reading carries no warning note', () => {
+  const s = buildSnapshot({
+    device: 'RHW01',
+    latest: { value: 49.6, ts: AT_2200_PHT - 60000 },
+    now: AT_2200_PHT,
+  });
+  assert.equal(s.staleMs, 60000);
+  assert.equal(s.note, null);
+});
+
+test('kwhSnapshot: consumption is the rise since yesterday', () => {
+  const s = buildSnapshot({
+    device: 'RHW01',
+    latest: { value: 50.0, ts: AT_2200_PHT },
+    previous: { value: 49.6 },
+    now: AT_2200_PHT,
+  });
+  assert.ok(Math.abs(s.deltaKwh - 0.4) < 1e-9);
+  assert.equal(s.resetSuspected, false);
+});
+
+test('kwhSnapshot: a meter that went BACKWARDS is a reset, not negative usage', () => {
+  // wecon2 does exactly this on every reboot: 1512.97 -> 1500.
+  const s = buildSnapshot({
+    device: 'wecon2',
+    latest: { value: 1500, ts: AT_2200_PHT },
+    previous: { value: 1512.97 },
+    now: AT_2200_PHT,
+  });
+  assert.equal(s.resetSuspected, true);
+  assert.equal(s.deltaKwh, null, 'negative consumption must never be reported');
+});
+
+test('kwhSnapshot: no reading at all is recorded honestly, not as zero', () => {
+  const s = buildSnapshot({ device: 'RHW01', latest: null, now: AT_2200_PHT });
+  assert.equal(s.value, null);
+  assert.notEqual(s.value, 0, 'a missing meter reading must not look like no consumption');
+  assert.equal(s.dateKey, '2026-09-19');
+  assert.match(s.note, /no kWh reading/);
+});
+
+test('kwhSnapshot: a reading with no timestamp reports unknown staleness', () => {
+  const s = buildSnapshot({
+    device: 'RHW01',
+    latest: { value: 49.6 },        // no ts
+    now: AT_2200_PHT,
+  });
+  assert.equal(s.value, 49.6);
+  assert.equal(s.staleMs, null, 'unknown staleness must not be reported as fresh');
+});
