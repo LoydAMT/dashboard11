@@ -9,7 +9,7 @@ import { computeDomain, axisTickFormatter, axisTicks } from '../lib/domain'
 import { flagChartAnomalies } from '../lib/anomalies'
 
 const ANOMALY_COLOR = { 'breach-hi': 'var(--alarm-hi)', 'breach-lo': 'var(--alarm-lo)', spike: 'var(--stale)' }
-const ANOMALY_TEXT = { 'breach-hi': 'above its high limit', 'breach-lo': 'below its low limit', spike: 'an unusual spike' }
+const ANOMALY_TEXT = { 'breach-hi': 'above its alert threshold', 'breach-lo': 'below its alert threshold', spike: 'an unusual spike' }
 
 /**
  * One-minute rollups for one or several tags over the selected window - or,
@@ -202,7 +202,7 @@ export function HistoryChart({ tags, colors, data, rangeMs, raw, indexed, loadin
 
       {hasAnomalies && (
         <div className="chart-note chart-anomaly-note">
-          <span className="anomaly-dot anomaly-dot-breach-hi" aria-hidden="true" /> above/below limit
+          <span className="anomaly-dot anomaly-dot-breach-hi" aria-hidden="true" /> past alert threshold
           {' · '}
           <span className="anomaly-dot anomaly-dot-spike" aria-hidden="true" /> unusual spike
         </div>

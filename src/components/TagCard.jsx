@@ -39,7 +39,7 @@ export function TagCard({ tag, stale, shown, color, blocked, maxSeries, onSelect
     tag.hasReading ? formatValue(tag) : 'no reading',
     unit || '',
     stale ? 'stale' : '',
-    alarm === 'high' ? 'above high limit' : alarm === 'low' ? 'below low limit' : '',
+    alarm === 'high' ? 'above alert threshold' : alarm === 'low' ? 'below alert threshold' : '',
     shown ? 'shown on chart' : 'hidden from chart',
   ].filter(Boolean).join(', ')
 
@@ -82,8 +82,8 @@ export function TagCard({ tag, stale, shown, color, blocked, maxSeries, onSelect
         )}
       </div>
 
-      {alarm === 'high' && <div className="card-flag">Above high limit</div>}
-      {alarm === 'low' && <div className="card-flag">Below low limit</div>}
+      {alarm === 'high' && <div className="card-flag">Above alert threshold</div>}
+      {alarm === 'low' && <div className="card-flag">Below alert threshold</div>}
 
       {/* Session-only, not "today" - a real day's tally would mean fetching a
           day of this tag's history just to caption a card, which is the exact

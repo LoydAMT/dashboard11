@@ -5,7 +5,7 @@ import { useAuth } from '../hooks/useAuth'
 import { useDeviceAccess } from '../hooks/useDeviceAccess'
 import { useRtdbValue } from '../hooks/useRtdbValue'
 import { useIsAdmin } from '../hooks/useIsAdmin'
-import { AlertLimits } from './AlertLimits'
+import { AlertThresholds } from './AlertThresholds'
 import { SignIn } from './SignIn'
 
 // Renaming stays one specific account, deliberately - it is a personal
@@ -83,27 +83,31 @@ export function NamingPage() {
       </header>
 
       <div className="notice notice-info">
-        <h2>Devices and alert limits</h2>
+        <h2>Devices and alerts</h2>
         <p>
           <strong>Name</strong> is what everyone signed in sees in place of a
           device's raw id. Clear it and save to go back to showing the id.
         </p>
         <p>
-          <strong>Alert limits</strong> say when a reading has left the band
-          you consider acceptable — a voltage floor, a tenant's agreed load
-          ceiling. Leave a field blank for no limit on that side.
+          <strong>Alert thresholds</strong> decide when you get told about a
+          reading — for example, notify if voltage drops below 207&nbsp;V, or
+          if a tenant draws more than 12&nbsp;A. Leave a field blank for no
+          alert on that side.</p>
+        <p className="admin-hint">
+          These only send notifications. Nothing is switched off, cut or
+          restricted — the system reads meters, it does not control supply.
         </p>
         <p className="admin-hint">
           Separate from spike alerts. A spike is a reading far outside a
-          tag's own recent range, and is reported whether or not a limit is
-          set here — it needs no configuration and cannot be switched off
-          from this page. Limits answer "is this allowed?"; spikes answer
-          "is this unusual?".
+          tag's own recent range, and is reported whether or not a threshold
+          is set here — it needs no configuration and cannot be switched off
+          from this page. Thresholds catch a value you have decided to watch
+          for; spikes catch a value nobody thought to watch for.
         </p>
         {!mayRename && (
           <p className="admin-hint">
             Renaming is restricted to one account, so the name fields are
-            read-only for you. Alert limits are editable by any admin.
+            read-only for you. Alert thresholds are editable by any admin.
           </p>
         )}
       </div>
@@ -131,7 +135,7 @@ function DeviceAdminCard({ deviceId, mayRename }) {
   return (
     <section className="admin-card">
       <NamingRow deviceId={deviceId} mayRename={mayRename} />
-      <AlertLimits deviceId={deviceId} />
+      <AlertThresholds deviceId={deviceId} />
     </section>
   )
 }

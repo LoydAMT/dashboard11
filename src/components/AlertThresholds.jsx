@@ -4,11 +4,15 @@ import { db } from '../firebase'
 import { useRtdbValue } from '../hooks/useRtdbValue'
 
 /**
- * Alert limits for one device, one row per tag.
+ * Alert thresholds for one device, one row per tag.
  *
- * A limit says "tell me when this reading leaves the band I consider
- * acceptable" - a voltage floor, a tenant's agreed load ceiling. It is a
- * statement about what is ALLOWED.
+ * NOTHING IS ENFORCED HERE. A threshold only decides when a NOTIFICATION is
+ * raised - no supply is cut, no load is restricted, nothing is switched
+ * off. "Limit" was the wrong word for that and is deliberately avoided
+ * throughout: it suggests the system can stop a tenant drawing power, which
+ * it cannot.
+ *
+ * A threshold says "tell me when this reading goes past here".
  *
  * That is a different question from the spike detector, which asks whether
  * a reading is UNUSUAL for this tag against its own recent behaviour. The
@@ -20,7 +24,7 @@ import { useRtdbValue } from '../hooks/useRtdbValue'
  * tags/ node - the box rewrites that node on every restart and would erase
  * anything stored beside it.
  */
-export function AlertLimits({ deviceId }) {
+export function AlertThresholds({ deviceId }) {
   const tags = useRtdbValue(`devices/${deviceId}/tags`, true)
   const rules = useRtdbValue(`alertRules/${deviceId}`, true)
 
@@ -32,25 +36,25 @@ export function AlertLimits({ deviceId }) {
     return (
       <p className="admin-hint">
         No tags published yet. A device only lists its tags once it has
-        connected and sent them, so there is nothing to set limits on until
+        connected and sent them, so there is nothing to set alerts on until
         then.
       </p>
     )
   }
 
   return (
-    <table className="limits-table">
+    <table className="thresholds-table">
       <thead>
         <tr>
           <th>Tag</th>
-          <th>Low limit</th>
-          <th>High limit</th>
+          <th>Alert below</th>
+          <th>Alert above</th>
           <th aria-label="Actions" />
         </tr>
       </thead>
       <tbody>
         {tagKeys.map((key) => (
-          <LimitRow
+          <ThresholdRow
             key={key}
             deviceId={deviceId}
             tagKey={key}
@@ -70,7 +74,7 @@ const numOrNull = (s) => {
   return Number.isFinite(n) ? n : undefined   // undefined = typed, not a number
 }
 
-function LimitRow({ deviceId, tagKey, unit, rule }) {
+function ThresholdRow({ deviceId, tagKey, unit, rule }) {
   // null means "not edited this session" so a live update can land without
   // overwriting what is being typed. Same pattern as the name field.
   const [loDraft, setLoDraft] = useState(null)
@@ -94,7 +98,7 @@ function LimitRow({ deviceId, tagKey, unit, rule }) {
     // boundary; this exists so the reason arrives immediately instead of as
     // a permission error that says nothing about what was wrong.
     if (loVal != null && hiVal != null && loVal >= hiVal) {
-      setState('error'); setError('The low limit must be below the high limit.'); return
+      setState('error'); setError('The lower value must be below the upper one.'); return
     }
 
     const next = {}
@@ -102,7 +106,7 @@ function LimitRow({ deviceId, tagKey, unit, rule }) {
     if (hiVal != null) next.hi = hiVal
 
     try {
-      // Both fields cleared means "no limits on this tag" - remove the node
+      // Both fields cleared means "no alerts on this tag" - remove the node
       // entirely rather than store an empty object, so "never configured"
       // and "configured with nothing" cannot drift apart.
       if (Object.keys(next).length === 0) {
@@ -126,29 +130,29 @@ function LimitRow({ deviceId, tagKey, unit, rule }) {
   const active = rule && (rule.lo != null || rule.hi != null)
 
   return (
-    <tr className={active ? 'limits-row is-set' : 'limits-row'}>
-      <td className="limits-tag">
+    <tr className={active ? 'thresholds-row is-set' : 'thresholds-row'}>
+      <td className="thresholds-tag">
         {tagKey}
-        {unit && <span className="limits-unit"> ({unit})</span>}
-        {!active && <span className="limits-off"> no limits set</span>}
+        {unit && <span className="thresholds-unit"> ({unit})</span>}
+        {!active && <span className="thresholds-off"> no alerts set</span>}
       </td>
       <td>
         <input
-          type="text" inputMode="decimal" className="limits-input"
+          type="text" inputMode="decimal" className="thresholds-input"
           value={lo} onChange={onEdit(setLoDraft)}
           onKeyDown={(e) => { if (e.key === 'Enter') save() }}
-          placeholder="—" aria-label={`Low limit for ${tagKey}`}
+          placeholder="—" aria-label={`Alert below this value for ${tagKey}`}
         />
       </td>
       <td>
         <input
-          type="text" inputMode="decimal" className="limits-input"
+          type="text" inputMode="decimal" className="thresholds-input"
           value={hi} onChange={onEdit(setHiDraft)}
           onKeyDown={(e) => { if (e.key === 'Enter') save() }}
-          placeholder="—" aria-label={`High limit for ${tagKey}`}
+          placeholder="—" aria-label={`Alert above this value for ${tagKey}`}
         />
       </td>
-      <td className="limits-actions">
+      <td className="thresholds-actions">
         <button
           type="button"
           className="signout-btn"
@@ -157,7 +161,7 @@ function LimitRow({ deviceId, tagKey, unit, rule }) {
         >
           {state === 'saved' ? 'Saved' : state === 'error' ? 'Error' : 'Save'}
         </button>
-        {error && <div className="limits-error" role="alert">{error}</div>}
+        {error && <div className="thresholds-error" role="alert">{error}</div>}
       </td>
     </tr>
   )

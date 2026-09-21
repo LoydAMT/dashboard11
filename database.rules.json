@@ -203,7 +203,11 @@
       }
     },
 
-    // Alert limits: alertRules/{deviceId}/{tagKey} = { hi, lo }.
+    // Alert thresholds: alertRules/{deviceId}/{tagKey} = { hi, lo }.
+    //
+    // NOTHING IS ENFORCED BY THESE. They decide when a notification fires.
+    // No supply is switched, cut or restricted anywhere in this system - the
+    // boxes read meters, they do not control load.
     //
     // Deliberately NOT stored under devices/{deviceId}/tags, even though
     // that is where a tag's other metadata lives: the box rewrites its own
@@ -211,7 +215,7 @@
     // be erased on the next reboot. These are server-owned and the device
     // never sees them.
     //
-    // Admin-only both ways. A limit decides whether an alarm fires at all,
+    // Admin-only both ways. A threshold decides whether an alarm fires at all,
     // so setting one is an operational act, not a preference - and reading
     // the list would tell any signed-in account what every other tenant's
     // thresholds are.
@@ -219,14 +223,14 @@
     // Only `hi` and `lo` are accepted, and only as numbers. The spike
     // detector needs no configuration and is not represented here; it fires
     // on a reading far outside a tag's own recent range, whether or not a
-    // fixed limit exists.
+    // fixed threshold exists.
     "alertRules": {
       ".read": "auth != null && root.child('admins/'+auth.uid).val() === true",
       "$deviceId": {
         "$tagKey": {
           ".write": "auth != null && root.child('admins/'+auth.uid).val() === true",
 
-          // A low limit at or above the high limit would put every reading
+          // A low threshold at or above the high one would put every reading
           // simultaneously over and under, which is not a state the alert
           // engine can report usefully. Rejected here rather than left to
           // be discovered from a confusing alert log.

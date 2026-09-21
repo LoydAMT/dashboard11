@@ -108,8 +108,8 @@ export function AlertHistory({ deviceId, onClose }) {
       {!loading && !error && shown.length === 0 && (
         <p className="alert-history-empty">
           No alerts recorded for this device yet. That is the expected state for
-          a healthy box - an empty log here means nothing crossed a limit and
-          the device never stopped reporting.
+          a healthy box - an empty log here means nothing crossed an alert
+          threshold and the device never stopped reporting.
         </p>
       )}
 
@@ -124,7 +124,7 @@ export function AlertHistory({ deviceId, onClose }) {
             {typeof a.value === 'number' && (
               <span className="alert-history-value">
                 {a.value}
-                {typeof a.limit === 'number' ? ` (limit ${a.limit})` : ''}
+                {typeof a.limit === 'number' ? ` (threshold ${a.limit})` : ''}
               </span>
             )}
           </li>

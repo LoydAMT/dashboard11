@@ -33,7 +33,7 @@ const DEFAULT_OFFLINE_AFTER_MS = 60000;
 // agree about what counts as one.
 //
 // Without this the server log is nearly always EMPTY: no tag on any device
-// has a limit configured, so alarm-high/low cannot fire, and a healthy box
+// has a threshold configured, so alarm-high/low cannot fire, and a healthy box
 // never goes offline. A spike is the only thing most sites will ever record,
 // which makes it the opposite of optional.
 //
@@ -97,7 +97,7 @@ function classify(rollup, rule) {
  * @param now         epoch ms
  *
  * Returns { events, state }. Events are TRANSITIONS only - a tag that stays
- * above its limit for an hour produces one alert, not sixty. A log that
+ * past its threshold for an hour produces one alert, not sixty. A log that
  * repeats itself every minute is one nobody reads.
  */
 function evaluate({
@@ -123,19 +123,19 @@ function evaluate({
     if (!w || !isNum(w.minute) || w.minute <= lastMinute) continue;
 
     // Spike test runs on EVERY tag with history, not only those with a
-    // configured limit. A limit is a statement about what is acceptable; a
-    // spike is a statement about what is unusual. Most tags here have the
+    // configured threshold. A threshold catches a value someone decided to
+    // watch for; a spike catches one nobody thought to watch for. Most tags here have the
     // second and not the first.
     for (const [tagKey, rollup] of Object.entries(w.byTag || {})) {
       if (!rollup || !isNum(rollup.avg)) continue;
       const buf = buffers[tagKey] || [];
 
-      // Suppress the spike when this same minute also breaches a configured
-      // limit: it is one excursion, and reporting it as both a spike and an
+      // Suppress the spike when this same minute also crosses a configured
+      // threshold: it is one excursion, and reporting it as both a spike and an
       // alarm is the same event told twice.
       //
       // Classified fresh from THIS minute rather than read from tagState.
-      // tagState is only updated by the limit loop further down, so reading
+      // tagState is only updated by the threshold loop further down, so reading
       // it here would see the previous minute's verdict and let both fire
       // on the very transition that matters most - which is exactly what
       // the first version of this did.
@@ -180,8 +180,8 @@ function evaluate({
           tagKey,
           tagName: name(tagKey),
           value: next === 'high' ? rollup.max : rollup.min,
-          limit: next === 'high' ? rule.hi : rule.lo,
-          message: `${name(tagKey)} ${next === 'high' ? 'above its high limit' : 'below its low limit'}`,
+          limit: next === 'high' ? rule.hi : rule.lo,   // stored key kept for older records
+          message: `${name(tagKey)} ${next === 'high' ? 'above its alert threshold' : 'below its alert threshold'}`,
         });
       } else {
         events.push({
@@ -192,7 +192,7 @@ function evaluate({
           tagKey,
           tagName: name(tagKey),
           value: rollup.avg,
-          message: `${name(tagKey)} back within limits`,
+          message: `${name(tagKey)} back within its normal range`,
         });
       }
       tagState[tagKey] = next;

@@ -6,7 +6,7 @@ const SPIKE_WINDOW = 24
 
 /**
  * Turns "the numbers changed" into "something happened worth telling someone
- * about" - a tag crossing a hard limit, a live value jumping well outside its
+ * about" - a tag crossing an alert threshold, a live value jumping well outside its
  * own recent spread, or the link to Firebase dropping and coming back.
  *
  * Nothing here reads anything new from the database: every signal it watches
@@ -91,7 +91,7 @@ export function useAlertCenter({ deviceId, tags, connectionLevel, enabled }) {
             level: 'critical',
             tagKey: tag.key,
             tagName: tag.name,
-            message: `${tag.name} is ${tag.alarm === 'high' ? 'above its high limit' : 'below its low limit'}`
+            message: `${tag.name} is ${tag.alarm === 'high' ? 'above its alert threshold' : 'below its alert threshold'}`
               + (tag.value != null ? ` (${tag.value}${tag.unit ? ` ${tag.unit}` : ''}).` : '.'),
           }))
           setSessions((prev) => {
@@ -104,7 +104,7 @@ export function useAlertCenter({ deviceId, tags, connectionLevel, enabled }) {
             level: 'info',
             tagKey: tag.key,
             tagName: tag.name,
-            message: `${tag.name} is back within limits.`,
+            message: `${tag.name} is back within its normal range.`,
           }))
           setSessions((prev) => {
             const s = prev[tag.key]

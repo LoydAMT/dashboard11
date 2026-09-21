@@ -1829,7 +1829,7 @@ body {
 }
 .alert-panel-full-note { display: block; color: var(--muted); font-size: 0.75rem; }
 
-/* Admin page: one card per device, holding its name and its alert limits. */
+/* Admin page: one card per device, holding its name and its alert thresholds. */
 .admin-card {
   border: 1px solid var(--border);
   border-radius: 8px;
@@ -1839,8 +1839,8 @@ body {
 }
 .admin-hint { color: var(--muted); font-size: 0.82rem; margin: 0.3rem 0; }
 
-.limits-table { width: 100%; border-collapse: collapse; margin-top: 0.5rem; font-size: 0.88rem; }
-.limits-table th {
+.thresholds-table { width: 100%; border-collapse: collapse; margin-top: 0.5rem; font-size: 0.88rem; }
+.thresholds-table th {
   text-align: left;
   font-size: 0.72rem;
   letter-spacing: 0.04em;
@@ -1850,15 +1850,15 @@ body {
   padding: 0.25rem 0.5rem 0.25rem 0;
   border-bottom: 1px solid var(--border);
 }
-.limits-table td { padding: 0.3rem 0.5rem 0.3rem 0; vertical-align: middle; }
-.limits-tag { white-space: nowrap; }
-.limits-unit { color: var(--muted); }
+.thresholds-table td { padding: 0.3rem 0.5rem 0.3rem 0; vertical-align: middle; }
+.thresholds-tag { white-space: nowrap; }
+.thresholds-unit { color: var(--muted); }
 /* Says plainly that a tag will never raise a limit alarm, rather than
    leaving two blank boxes to be read as either "none" or "not loaded". */
-.limits-off { color: var(--muted); font-size: 0.75rem; font-style: italic; }
-.limits-row.is-set .limits-tag { font-weight: 600; }
+.thresholds-off { color: var(--muted); font-size: 0.75rem; font-style: italic; }
+.thresholds-row.is-set .thresholds-tag { font-weight: 600; }
 
-.limits-input {
+.thresholds-input {
   width: 6.5rem;
   padding: 0.3rem 0.45rem;
   border: 1px solid var(--border);
@@ -1867,14 +1867,14 @@ body {
   color: var(--fg);
   font-variant-numeric: tabular-nums;
 }
-.limits-input:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
-.limits-actions { text-align: right; white-space: nowrap; }
-.limits-error { color: var(--danger, #e5484d); font-size: 0.75rem; margin-top: 0.2rem; text-align: right; }
+.thresholds-input:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.thresholds-actions { text-align: right; white-space: nowrap; }
+.thresholds-error { color: var(--danger, #e5484d); font-size: 0.75rem; margin-top: 0.2rem; text-align: right; }
 
 @media (max-width: 620px) {
-  .limits-table, .limits-table tbody, .limits-table tr, .limits-table td { display: block; width: 100%; }
-  .limits-table thead { display: none; }
-  .limits-row { border-bottom: 1px solid var(--border); padding-bottom: 0.4rem; margin-bottom: 0.4rem; }
-  .limits-input { width: 100%; }
-  .limits-actions { text-align: left; }
+  .thresholds-table, .thresholds-table tbody, .thresholds-table tr, .thresholds-table td { display: block; width: 100%; }
+  .thresholds-table thead { display: none; }
+  .thresholds-row { border-bottom: 1px solid var(--border); padding-bottom: 0.4rem; margin-bottom: 0.4rem; }
+  .thresholds-input { width: 100%; }
+  .thresholds-actions { text-align: left; }
 }

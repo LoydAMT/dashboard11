@@ -84,7 +84,7 @@ const numOrNull = (v) => (typeof v === 'number' && Number.isFinite(v) ? v : null
 
 /**
  * Where a value sits against its limits.
- * 'unknown' when there is no value or no limits — never silently "ok".
+ * 'unknown' when there is no value or no thresholds — never silently "ok".
  */
 export function limitState(tag) {
   if (tag.value == null || typeof tag.value !== 'number') return 'unknown'

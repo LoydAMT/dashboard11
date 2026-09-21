@@ -12,8 +12,8 @@ import { isRawRange } from '../lib/ranges'
 const DISPLAY_LIMIT = 500
 
 const ANOMALY_LABEL = {
-  'breach-hi': 'Above this tag’s high limit',
-  'breach-lo': 'Below this tag’s low limit',
+  'breach-hi': 'Above this tag’s alert threshold',
+  'breach-lo': 'Below this tag’s alert threshold',
   spike: 'An unusual spike against this tag’s recent trend',
 }
 
