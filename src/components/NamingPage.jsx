@@ -4,13 +4,19 @@ import { db } from '../firebase'
 import { useAuth } from '../hooks/useAuth'
 import { useDeviceAccess } from '../hooks/useDeviceAccess'
 import { useRtdbValue } from '../hooks/useRtdbValue'
+import { useIsAdmin } from '../hooks/useIsAdmin'
+import { AlertLimits } from './AlertLimits'
 import { SignIn } from './SignIn'
 
-// Hardcoded on purpose, not a role in the access model (see
-// database.rules.json's viewers/operators/admins). This is the client-side
-// half of the gate; the rule on naming/{deviceId}'s .write is the half that
-// actually matters - this one only decides whether the page bothers to
-// render the form, not whether a write would succeed.
+// Renaming stays one specific account, deliberately - it is a personal
+// labelling tool, not a role. Alert limits are the opposite: setting a
+// tenant's load ceiling is an operational act any admin should be able to
+// perform. So the PAGE opens for admins, and the name field is disabled
+// for anyone who is not this account.
+//
+// Both are only the client-side half. The rules on naming/{deviceId} and
+// alertRules/{deviceId} are what actually decide whether a write lands;
+// these constants just stop the UI offering something that would fail.
 const NAMING_ACCESS_UID = 'ROz1Xq3b4yReAPkLNGJCFbj6inV2'
 
 /**
@@ -26,6 +32,8 @@ const NAMING_ACCESS_UID = 'ROz1Xq3b4yReAPkLNGJCFbj6inV2'
 export function NamingPage() {
   const { user, resolved, realUser } = useAuth()
   const deviceAccess = useDeviceAccess(realUser ? user : null)
+  const isAdmin = useIsAdmin(realUser ? user : null)
+  const mayRename = user?.uid === NAMING_ACCESS_UID
 
   if (!resolved) {
     return (
@@ -50,7 +58,7 @@ export function NamingPage() {
     )
   }
 
-  if (user.uid !== NAMING_ACCESS_UID) {
+  if (!isAdmin) {
     return (
       <div className="app">
         <div className="notice">
@@ -69,19 +77,35 @@ export function NamingPage() {
           <img className="masthead-logo" src="/favicon-48.png" alt="" aria-hidden="true" />
           <div className="masthead-text">
             <h1>INSTRUBYTE</h1>
-            <span className="masthead-tagline">Device names</span>
+            <span className="masthead-tagline">Admin</span>
           </div>
         </div>
       </header>
 
       <div className="notice notice-info">
-        <h2>Rename devices</h2>
+        <h2>Devices and alert limits</h2>
         <p>
-          Sets the name everyone signed in sees in place of a device's raw id
-          — this changes naming/&#123;deviceId&#125; only; the device's own
-          data and id are untouched. Clear a field and save to remove the
-          override and go back to showing the raw id.
+          <strong>Name</strong> is what everyone signed in sees in place of a
+          device's raw id. Clear it and save to go back to showing the id.
         </p>
+        <p>
+          <strong>Alert limits</strong> say when a reading has left the band
+          you consider acceptable — a voltage floor, a tenant's agreed load
+          ceiling. Leave a field blank for no limit on that side.
+        </p>
+        <p className="admin-hint">
+          Separate from spike alerts. A spike is a reading far outside a
+          tag's own recent range, and is reported whether or not a limit is
+          set here — it needs no configuration and cannot be switched off
+          from this page. Limits answer "is this allowed?"; spikes answer
+          "is this unusual?".
+        </p>
+        {!mayRename && (
+          <p className="admin-hint">
+            Renaming is restricted to one account, so the name fields are
+            read-only for you. Alert limits are editable by any admin.
+          </p>
+        )}
       </div>
 
       {deviceAccess.loading && <p>Loading your devices…</p>}
@@ -93,7 +117,7 @@ export function NamingPage() {
       {!deviceAccess.loading && deviceAccess.devices.length > 0 && (
         <div className="naming-list">
           {deviceAccess.devices.map((d) => (
-            <NamingRow key={d.id} deviceId={d.id} />
+            <DeviceAdminCard key={d.id} deviceId={d.id} mayRename={mayRename} />
           ))}
         </div>
       )}
@@ -103,7 +127,16 @@ export function NamingPage() {
   )
 }
 
-function NamingRow({ deviceId }) {
+function DeviceAdminCard({ deviceId, mayRename }) {
+  return (
+    <section className="admin-card">
+      <NamingRow deviceId={deviceId} mayRename={mayRename} />
+      <AlertLimits deviceId={deviceId} />
+    </section>
+  )
+}
+
+function NamingRow({ deviceId, mayRename }) {
   const node = useRtdbValue(`naming/${deviceId}`, true)
 
   // null = "untouched this session, show whatever naming/{deviceId} holds
@@ -142,10 +175,13 @@ function NamingRow({ deviceId }) {
         onKeyDown={(e) => { if (e.key === 'Enter') save() }}
         placeholder={deviceId}
         aria-label={`Display name for ${deviceId}`}
+        disabled={!mayRename}
       />
-      <button type="button" className="signout-btn naming-save" onClick={save}>
-        {saved ? 'Saved' : error ? 'Error' : 'Save'}
-      </button>
+      {mayRename && (
+        <button type="button" className="signout-btn naming-save" onClick={save}>
+          {saved ? 'Saved' : error ? 'Error' : 'Save'}
+        </button>
+      )}
       {error && <span className="naming-row-error" role="alert">{error}</span>}
     </div>
   )

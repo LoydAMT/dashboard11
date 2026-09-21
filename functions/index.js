@@ -94,7 +94,21 @@ exports.readArchive = onRequest(
 // subtree - the single most expensive thing that could be done on a
 // bandwidth-constrained database, to learn three names. Add a device here
 // when one is commissioned.
-const SWEEP_DEVICES = ['RHW01', 'wecon2', 'wecon3'];
+const SWEEP_DEVICES = [
+  'RHW01',
+  // wecon2 and wecon3 are now SHARED boxes: the box id itself holds only
+  // status, and each tenant publishes under its own device id. Both are
+  // listed so the box's own health is still swept, and so is every tenant.
+  // The box id is ALSO the first tenant on these two, so it keeps
+  // publishing readings rather than sitting online with nothing to show.
+  'wecon2', 'wecon2-c2', 'wecon2-c3',
+  'wecon3', 'wecon3-c2', 'wecon3-c3',
+];
+
+// NOTE: this array is exactly what has to become dynamic before a real
+// mall. Three devices became nine by adding two test tenants; 90 tenants
+// cannot be a literal list, and a device missing from it is silently never
+// archived and never alerted on. See SCOPE_PER_TENANT_LOGINS.txt item W2.
 
 const rollupRef = (device, tag) => getDatabase().ref(`devices/${device}/history/${tag}`);
 

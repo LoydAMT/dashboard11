@@ -203,6 +203,42 @@
       }
     },
 
+    // Alert limits: alertRules/{deviceId}/{tagKey} = { hi, lo }.
+    //
+    // Deliberately NOT stored under devices/{deviceId}/tags, even though
+    // that is where a tag's other metadata lives: the box rewrites its own
+    // tags/ node on every push_meta(), so anything kept alongside it would
+    // be erased on the next reboot. These are server-owned and the device
+    // never sees them.
+    //
+    // Admin-only both ways. A limit decides whether an alarm fires at all,
+    // so setting one is an operational act, not a preference - and reading
+    // the list would tell any signed-in account what every other tenant's
+    // thresholds are.
+    //
+    // Only `hi` and `lo` are accepted, and only as numbers. The spike
+    // detector needs no configuration and is not represented here; it fires
+    // on a reading far outside a tag's own recent range, whether or not a
+    // fixed limit exists.
+    "alertRules": {
+      ".read": "auth != null && root.child('admins/'+auth.uid).val() === true",
+      "$deviceId": {
+        "$tagKey": {
+          ".write": "auth != null && root.child('admins/'+auth.uid).val() === true",
+
+          // A low limit at or above the high limit would put every reading
+          // simultaneously over and under, which is not a state the alert
+          // engine can report usefully. Rejected here rather than left to
+          // be discovered from a confusing alert log.
+          ".validate": "!(newData.hasChild('hi') && newData.hasChild('lo')) || newData.child('lo').val() < newData.child('hi').val()",
+
+          "hi": { ".validate": "newData.isNumber()" },
+          "lo": { ".validate": "newData.isNumber()" },
+          "$other": { ".validate": false }
+        }
+      }
+    },
+
     // A display-name override for a device, shared with everyone who can see
     // it - deliberately not device data itself (devices/{deviceId} is
     // untouched by this) and not per-browser: this exists so a rename shows
@@ -211,16 +247,17 @@
     // itself - knowing its friendly name is no more sensitive than seeing
     // its telemetry.
     //
-    // Write was a single hardcoded uid, from when this was one person's
-    // labeling tool. That does not survive a second admin, let alone a
-    // fleet, so it is now the admin role - which is the super-admin role in
-    // this project and currently holds exactly khent and mvano. (Matches
-    // the client-side gate in components/NamingPage.jsx - that check is for
-    // the page's UI, this rule is the actual boundary.)
+    // Write is intentionally NOT a role in the access model: one specific
+    // account, hardcoded. This is a personal labeling tool for that account
+    // rather than a capability meant to be handed to operators or admins
+    // generally - being an admin does not make renaming someone else's
+    // device your business. (Matches the client-side gate in
+    // components/NamingPage.jsx - that check is for the page's UI, this
+    // rule is the actual boundary.)
     "naming": {
       "$deviceId": {
         ".read": "auth != null && auth.token.firebase.sign_in_provider !== 'anonymous' && (root.child('devices/'+$deviceId+'/viewers/'+auth.uid).val() === true || root.child('devices/'+$deviceId+'/operators/'+auth.uid).val() === true || root.child('admins/'+auth.uid).val() === true)",
-        ".write": "auth != null && root.child('admins/'+auth.uid).val() === true",
+        ".write": "auth.uid === 'ROz1Xq3b4yReAPkLNGJCFbj6inV2'",
         // Either a real, short label, or the key is being removed entirely
         // (clearing the override, back to showing the raw id) - an empty
         // string is deliberately not a valid stored value, so "cleared" and

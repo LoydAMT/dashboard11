@@ -1828,3 +1828,53 @@ body {
   font-size: 0.85rem;
 }
 .alert-panel-full-note { display: block; color: var(--muted); font-size: 0.75rem; }
+
+/* Admin page: one card per device, holding its name and its alert limits. */
+.admin-card {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0.85rem 1rem 0.5rem;
+  margin-bottom: 0.9rem;
+  background: var(--panel);
+}
+.admin-hint { color: var(--muted); font-size: 0.82rem; margin: 0.3rem 0; }
+
+.limits-table { width: 100%; border-collapse: collapse; margin-top: 0.5rem; font-size: 0.88rem; }
+.limits-table th {
+  text-align: left;
+  font-size: 0.72rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted);
+  font-weight: 600;
+  padding: 0.25rem 0.5rem 0.25rem 0;
+  border-bottom: 1px solid var(--border);
+}
+.limits-table td { padding: 0.3rem 0.5rem 0.3rem 0; vertical-align: middle; }
+.limits-tag { white-space: nowrap; }
+.limits-unit { color: var(--muted); }
+/* Says plainly that a tag will never raise a limit alarm, rather than
+   leaving two blank boxes to be read as either "none" or "not loaded". */
+.limits-off { color: var(--muted); font-size: 0.75rem; font-style: italic; }
+.limits-row.is-set .limits-tag { font-weight: 600; }
+
+.limits-input {
+  width: 6.5rem;
+  padding: 0.3rem 0.45rem;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: var(--bg);
+  color: var(--fg);
+  font-variant-numeric: tabular-nums;
+}
+.limits-input:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.limits-actions { text-align: right; white-space: nowrap; }
+.limits-error { color: var(--danger, #e5484d); font-size: 0.75rem; margin-top: 0.2rem; text-align: right; }
+
+@media (max-width: 620px) {
+  .limits-table, .limits-table tbody, .limits-table tr, .limits-table td { display: block; width: 100%; }
+  .limits-table thead { display: none; }
+  .limits-row { border-bottom: 1px solid var(--border); padding-bottom: 0.4rem; margin-bottom: 0.4rem; }
+  .limits-input { width: 100%; }
+  .limits-actions { text-align: left; }
+}
