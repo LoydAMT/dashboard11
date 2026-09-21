@@ -15,6 +15,7 @@ const { createSweep, hourOf, HOUR_MS } = require('./archiveSweep');
 const { computeProjection, toUpdates } = require('./projectCompanyAccess');
 const { evaluate: evaluateAlerts, alertId } = require('./alertEngine');
 const { buildSnapshot, phDateKey } = require('./kwhSnapshot');
+const AF = require('./archiveFormat');
 
 if (getApps().length === 0) {
   initializeApp();
@@ -68,12 +69,22 @@ exports.readArchive = onRequest(
     // where() query: same number of document reads, but no composite index
     // to create and keep deployed, and a missing hour simply comes back
     // non-existent instead of needing its own handling.
+    // Day documents, not hourly ones. `hours` still arrives as a list of
+    // hours from validateQuery, so it is collapsed to the distinct days it
+    // touches - 168 hours becomes 7 reads instead of 168.
+    //
+    // Returned in the v1 { samples: [...] } shape because that is what the
+    // handler already clips and flattens; unpackDay reads either format, so
+    // a document written before the change still works.
     getArchiveDocs: async (device, tag, hours) => {
       const fs = getFirestore();
       const col = fs.collection('devices').doc(device).collection('archive');
-      const refs = hours.map((h) => col.doc(`${tag}_${h}`));
+      const ids = [...new Set(hours.map((h) => AF.docIdFor(tag, AF.dayOf(h))))];
+      const refs = ids.map((id) => col.doc(id));
       const snaps = await fs.getAll(...refs);
-      return snaps.filter((s) => s.exists).map((s) => s.data());
+      return snaps
+        .filter((s) => s.exists)
+        .map((s) => ({ samples: AF.unpackDay(s.data()) }));
     },
   })
 );
@@ -143,25 +154,41 @@ exports.archiveSweep = onSchedule(
       // same field shape as archiveRollups writes, so a device archiving
       // the same hour overwrites this with identical content instead of
       // creating a duplicate.
+      // One document per tag per DAY (see archiveFormat.js). An hour is
+      // merged INTO its day document rather than replacing it, because the
+      // sweep still works an hour at a time - so the other 23 hours already
+      // stored must survive this write.
       writeArchiveHour: async (device, hour, perTag) => {
         const fs = getFirestore();
-        const batch = fs.batch();
+        const day = AF.dayOf(hour);
         const receivedAt = FieldValue.serverTimestamp();
         let count = 0;
+
         for (const [tag, tuples] of Object.entries(perTag)) {
           const ref = fs
             .collection('devices').doc(device)
-            .collection('archive').doc(`${tag}_${hour}`);
-          batch.set(ref, {
-            device,
-            tag,
-            hour,
-            samples: tuples.map(tupleToSampleMap),
-            receivedAt,
+            .collection('archive').doc(AF.docIdFor(tag, day));
+
+          // Read-merge-write, inside a transaction. Two hours of the same
+          // day can be archived in one run, and a plain set() would have
+          // the second overwrite the first.
+          await fs.runTransaction(async (tx) => {
+            const snap = await tx.get(ref);
+            const existing = snap.exists ? AF.unpackDay(snap.data()) : [];
+            const incoming = tuples.map(tupleToSampleMap);
+
+            // Incoming wins on a collision: it was just read from RTDB and
+            // is therefore at least as current as whatever is stored.
+            const byT = new Map(existing.map((r) => [r.t, r]));
+            for (const r of incoming) byT.set(r.t, r);
+
+            const packed = AF.packDay({
+              device, tag, day, rows: [...byT.values()],
+            });
+            if (packed) tx.set(ref, { ...packed, receivedAt });
           });
           count += 1;
         }
-        await batch.commit();
         return count;
       },
 
@@ -533,5 +560,103 @@ exports.kwhDailySnapshot = onSchedule(
         console.error(`kwhDailySnapshot: ${device} failed`, err);
       }
     }
+  }
+);
+
+// ---------------------------------------------------------------------------
+//  ONE-SHOT: convert the archive from hourly documents to day documents.
+//
+//  Delete this function once it has been run. It exists because RHW01 holds
+//  REAL meter history that must survive the format change - the two
+//  simulated boxes can simply be discarded.
+//
+//  Three modes, and the destructive ones are never the default:
+//    dry   - report what would happen, change nothing
+//    apply - write day documents, then delete the hourly ones they replace
+//    wipe  - delete every archive document for a device (simulated boxes)
+//
+//  Guarded by the same key as the archive relay.
+// ---------------------------------------------------------------------------
+exports.migrateArchive = onRequest(
+  { region: 'asia-southeast1', secrets: [ARCHIVE_RELAY_KEY], timeoutSeconds: 540 },
+  async (req, res) => {
+    if (req.query.key !== ARCHIVE_RELAY_KEY.value()) {
+      res.status(401).json({ error: 'bad key' });
+      return;
+    }
+    const device = String(req.query.device || '');
+    const mode = String(req.query.mode || 'dry');
+    if (!device) { res.status(400).json({ error: 'device required' }); return; }
+    if (!['dry', 'apply', 'wipe'].includes(mode)) {
+      res.status(400).json({ error: 'mode must be dry, apply or wipe' });
+      return;
+    }
+
+    const fs = getFirestore();
+    const col = fs.collection('devices').doc(device).collection('archive');
+    const snap = await col.get();
+
+    if (mode === 'wipe') {
+      let deleted = 0;
+      for (let i = 0; i < snap.docs.length; i += 400) {
+        const batch = fs.batch();
+        for (const d of snap.docs.slice(i, i + 400)) { batch.delete(d.ref); deleted += 1; }
+        await batch.commit();
+      }
+      // The watermark must go too, or the sweep believes these hours are
+      // already archived and will never rebuild them.
+      await fs.collection('sweepState').doc(device).delete().catch(() => {});
+      res.status(200).json({ device, mode, deleted, sweepStateCleared: true });
+      return;
+    }
+
+    // Group every existing document's rows by (tag, day). Works whichever
+    // format each document is in, because unpackDay reads both - so a
+    // half-finished run can simply be run again.
+    const byTagDay = new Map();
+    let v1Docs = 0, v2Docs = 0, rows = 0;
+    for (const d of snap.docs) {
+      const data = d.data() || {};
+      const tag = data.tag || String(d.id).split('_')[0];
+      if (data.v === 2) v2Docs += 1; else v1Docs += 1;
+      for (const r of AF.unpackDay(data)) {
+        if (typeof r.t !== 'number') continue;
+        const key = `${tag}|${AF.dayOf(r.t)}`;
+        if (!byTagDay.has(key)) byTagDay.set(key, { tag, day: AF.dayOf(r.t), rows: [] });
+        byTagDay.get(key).rows.push(r);
+        rows += 1;
+      }
+    }
+
+    const summary = {
+      device, mode,
+      existingDocs: snap.size, v1Docs, v2Docs, rowsFound: rows,
+      dayDocsAfter: byTagDay.size,
+      reduction: snap.size ? `${(snap.size / Math.max(1, byTagDay.size)).toFixed(1)}x fewer documents` : 'n/a',
+    };
+
+    if (mode === 'dry') { res.status(200).json(summary); return; }
+
+    // Write every day document BEFORE deleting anything. A crash between
+    // the two leaves duplicates, which are harmless and idempotent to
+    // re-run; the reverse order would lose readings.
+    let written = 0;
+    for (const { tag, day, rows: dayRows } of byTagDay.values()) {
+      const packed = AF.packDay({ device, tag, day, rows: dayRows });
+      if (!packed) continue;
+      await col.doc(AF.docIdFor(tag, day)).set({ ...packed, receivedAt: FieldValue.serverTimestamp() });
+      written += 1;
+    }
+
+    const keep = new Set([...byTagDay.values()].map((x) => AF.docIdFor(x.tag, x.day)));
+    let deleted = 0;
+    const stale = snap.docs.filter((d) => !keep.has(d.id));
+    for (let i = 0; i < stale.length; i += 400) {
+      const batch = fs.batch();
+      for (const d of stale.slice(i, i + 400)) { batch.delete(d.ref); deleted += 1; }
+      await batch.commit();
+    }
+
+    res.status(200).json({ ...summary, written, deletedOldDocs: deleted });
   }
 );

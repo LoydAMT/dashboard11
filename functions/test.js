@@ -1083,3 +1083,88 @@ test('kwhSnapshot: a reading with no timestamp reports unknown staleness', () =>
   assert.equal(s.value, 49.6);
   assert.equal(s.staleMs, null, 'unknown staleness must not be reported as fresh');
 });
+
+// --- archiveFormat: day-grouped storage ---------------------------------
+//
+// This decides how real meter history is stored and read back, so the
+// properties under test are the ones that would corrupt it silently:
+// parallel arrays staying in step, gaps surviving, and the OLD format
+// still being readable while a migration is in flight.
+
+const AF = require('./archiveFormat');
+
+const DAY = AF.dayOf(Date.parse('2026-09-21T13:45:00Z'));
+const row = (i, v = 1) => ({ t: DAY + i * 60000, min: v, avg: v + 0.1, max: v + 0.2, n: 60 });
+
+test('archiveFormat: a full day round-trips exactly', () => {
+  const rows = Array.from({ length: 1440 }, (_, i) => row(i, i / 100));
+  const back = AF.unpackDay(AF.packDay({ device: 'd', tag: 'Current', day: DAY, rows }));
+  assert.equal(back.length, 1440);
+  assert.deepEqual(back[0], rows[0]);
+  assert.deepEqual(back[1439], rows[1439]);
+});
+
+test('archiveFormat: gaps survive - a missing minute stays missing', () => {
+  // An outage leaves holes. Storing them as present-but-zero would invent
+  // readings that never happened.
+  const rows = [row(0), row(1), row(500), row(1439)];
+  const packed = AF.packDay({ device: 'd', tag: 'Current', day: DAY, rows });
+  assert.deepEqual(packed.m, [0, 1, 500, 1439]);
+  const back = AF.unpackDay(packed);
+  assert.equal(back.length, 4);
+  assert.equal(back[2].t, DAY + 500 * 60000);
+});
+
+test('archiveFormat: rows arriving out of order are sorted, not mangled', () => {
+  const rows = [row(5, 5), row(1, 1), row(3, 3)];
+  const back = AF.unpackDay(AF.packDay({ device: 'd', tag: 'Current', day: DAY, rows }));
+  assert.deepEqual(back.map((r) => r.t), [DAY + 60000, DAY + 3 * 60000, DAY + 5 * 60000]);
+  assert.equal(back[0].min, 1);
+  assert.equal(back[2].min, 5);
+});
+
+test('archiveFormat: two rollups in one minute cannot desync the arrays', () => {
+  const rows = [row(0, 1), { ...row(0, 99) }, row(1, 2)];
+  const packed = AF.packDay({ device: 'd', tag: 'Current', day: DAY, rows });
+  assert.equal(packed.m.length, packed.min.length);
+  assert.equal(packed.m.length, packed.avg.length);
+  assert.equal(packed.m.length, packed.max.length);
+  assert.equal(packed.m.length, packed.n.length);
+  assert.deepEqual(packed.m, [0, 1]);
+});
+
+test('archiveFormat: rows outside the day are refused, not silently folded in', () => {
+  const rows = [row(0), { ...row(0), t: DAY - 60000 }, { ...row(0), t: DAY + AF.DAY_MS }];
+  const packed = AF.packDay({ device: 'd', tag: 'Current', day: DAY, rows });
+  assert.equal(packed.m.length, 1, 'a neighbouring day leaked into this document');
+});
+
+test('archiveFormat: an empty day returns null, not an empty document', () => {
+  // "No data" and "never archived" must stay distinguishable.
+  assert.equal(AF.packDay({ device: 'd', tag: 'Current', day: DAY, rows: [] }), null);
+  assert.equal(AF.packDay({ device: 'd', tag: 'Current', day: DAY, rows: null }), null);
+});
+
+test('archiveFormat: malformed rows are dropped rather than stored as nulls', () => {
+  const rows = [row(0), { t: DAY + 60000, min: 'x', avg: 1, max: 2, n: 3 }, row(2)];
+  const packed = AF.packDay({ device: 'd', tag: 'Current', day: DAY, rows });
+  assert.deepEqual(packed.m, [0, 2]);
+});
+
+test('archiveFormat: the OLD hourly format is still readable', () => {
+  // Both shapes exist while a migration is running. A reader that only
+  // understands the new one turns a format change into an outage.
+  const v1 = { samples: [{ t: DAY, min: 1, avg: 2, max: 3, n: 60 }] };
+  const back = AF.unpackDay(v1);
+  assert.equal(back.length, 1);
+  assert.equal(back[0].t, DAY);
+  assert.equal(back[0].avg, 2);
+});
+
+test('archiveFormat: day ids cover the whole requested span', () => {
+  const ids = AF.dayIdsFor('Current', DAY - 6 * AF.DAY_MS, DAY);
+  assert.equal(ids.length, 7, '7 days must be 7 documents');
+  assert.match(ids[6], /^Current_\d{4}-\d{2}-\d{2}$/);
+  // a range inside one day is one document, not zero
+  assert.equal(AF.dayIdsFor('Current', DAY + 1000, DAY + 2000).length, 1);
+});
