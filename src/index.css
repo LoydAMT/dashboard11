@@ -506,6 +506,7 @@ body {
   stroke-linecap: round;
 }
 
+.gauge-zone { stroke-linecap: round; }
 .gauge-zone-lo { stroke: var(--alarm-lo); opacity: .75; }
 .gauge-zone-hi { stroke: var(--alarm-hi); opacity: .75; }
 
@@ -516,11 +517,6 @@ body {
 .gauge-inferred .gauge-zone-hi {
   stroke: var(--border-strong);
   opacity: .55;
-}
-
-.gauge-tick {
-  stroke: var(--surface);
-  stroke-width: 1.5;
 }
 
 .gauge-needle {

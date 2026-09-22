@@ -19,17 +19,33 @@ const CX = 50
 const CY = 50
 const STROKE = 9
 
+// Every band is drawn with a ROUND cap, which extends it by half a stroke
+// width beyond each endpoint. Left uncorrected that would paint the 10%
+// zones as ~17% of the sweep and leave the grey track poking out past the
+// coloured ends. So each band is pulled in by exactly the length that cap
+// adds back, and the rendered result lands on its true boundary.
+//
+// Half a stroke, as a fraction of the arc's length (pi * R).
+const CAP = (STROKE / 2) / (Math.PI * R)
+
 /** Point on the arc at `pct` (0 = left end, 1 = right end). */
 function pointAt(pct, radius = R) {
   const angle = Math.PI * (1 - pct)       // pi -> 0 sweeping left to right
   return { x: CX + radius * Math.cos(angle), y: CY - radius * Math.sin(angle) }
 }
 
-/** SVG path for the arc segment between two fractions. */
+/**
+ * SVG path for the arc segment that RENDERS between two fractions once its
+ * round cap is added. Guarded so a band shorter than its own caps collapses
+ * to a dot at its midpoint instead of drawing backwards.
+ */
 function arcPath(from, to, radius = R) {
-  const a = pointAt(from, radius)
-  const b = pointAt(to, radius)
-  const large = to - from > 0.5 ? 1 : 0
+  let f = from + CAP
+  let t = to - CAP
+  if (t <= f) { const mid = (from + to) / 2; f = mid; t = mid }
+  const a = pointAt(f, radius)
+  const b = pointAt(t, radius)
+  const large = t - f > 0.5 ? 1 : 0
   return `M ${a.x} ${a.y} A ${radius} ${radius} 0 ${large} 1 ${b.x} ${b.y}`
 }
 
@@ -66,8 +82,9 @@ export function TagGauge({ scale, alarm, stale, children, label }) {
         aria-label={label}
         preserveAspectRatio="xMidYMax meet"
       >
-        {/* Normal band first, then the zones painted over its ends, so the
-            joins are covered by the zone caps rather than leaving a seam. */}
+        {/* Normal band first, then the zones painted over its ends. All
+            three share the same radius and stroke, so a zone's cap lands
+            exactly on the track's and the join is seamless. */}
         <path className="gauge-track" d={arcPath(0, 1)} strokeWidth={STROKE} fill="none" />
 
         {loStop != null && (
@@ -78,11 +95,6 @@ export function TagGauge({ scale, alarm, stale, children, label }) {
           <path className="gauge-zone gauge-zone-hi" d={arcPath(hiStop, 1)}
                 strokeWidth={STROKE} fill="none" />
         )}
-
-        {/* Tick at each zone edge - the arc alone leaves the boundary a
-            little ambiguous at small sizes. */}
-        {loStop != null && <line className="gauge-tick" {...tick(loStop)} />}
-        {hiStop != null && <line className="gauge-tick" {...tick(hiStop)} />}
 
         {needle && (
           <line
@@ -109,10 +121,4 @@ export function TagGauge({ scale, alarm, stale, children, label }) {
       <div className="gauge-readout">{children}</div>
     </div>
   )
-}
-
-function tick(pct) {
-  const a = pointAt(pct, R - STROKE / 2)
-  const b = pointAt(pct, R + STROKE / 2)
-  return { x1: a.x, y1: a.y, x2: b.x, y2: b.y }
 }
