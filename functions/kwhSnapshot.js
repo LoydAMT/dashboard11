@@ -1,25 +1,24 @@
 'use strict';
 
 // ============================================================================
-//  TEMPORARY. Remove this once the devices publish kWh every 10 minutes.
+//  Daily kWh record, one document per Philippine calendar day.
 // ============================================================================
 //
 // WHY IT EXISTS
-// A daily meter reading is wanted at 22:00 Philippine time. The devices
-// currently publish kWh on a 12-HOUR interval, so at 22:00 the newest value
-// available may have been taken at 10:00 that morning - and every kWh
-// consumed in between lands on the wrong day.
+// A daily meter reading is wanted at 22:00 Philippine time. This is no longer
+// a workaround: the boxes now take their own reading at exactly that moment
+// (daily_at_utc = 14 in the Lua, 14:00 UTC = 22:00 PHT), and this function
+// turns that reading into a per-day record with a day-over-day delta.
 //
-// This records the best value available at 22:00 and, crucially, records HOW
-// STALE it was. A number that lies about its own precision is worse than no
-// number, and a billing figure quietly carrying twelve hours of drift is
-// exactly that.
+// It runs at 22:05, five minutes BEHIND the devices, so the reading it picks
+// up is today's rather than yesterday's. `staleMs` is what proves that held:
+// once every box is flashed it should sit at seconds. A number that lies
+// about its own precision is worse than no number, so staleness is recorded
+// rather than assumed.
 //
-// THE REAL FIX is one config value in the Lua: kWh interval_ms from
-// 12 * 3600000 to 600000. That is already applied in the Desktop copies,
-// pending a deploy. Once every box is running it, `staleMs` here will sit
-// under ten minutes and this whole file can go - or stay, harmlessly, as a
-// convenience index over the archive.
+// Until a box is flashed it still publishes kWh on its old interval, and
+// staleMs for that device will show hours. That is the signal that the box
+// is still on old firmware, not a fault here.
 //
 // METER RESETS
 // A kWh accumulator should only ever rise. The simulated boxes reset theirs

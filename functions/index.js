@@ -528,9 +528,14 @@ exports.readAlerts = onRequest(
 exports.kwhDailySnapshot = onSchedule(
   {
     region: 'asia-southeast1',
-    // 22:00 Philippine time. Expressed in Asia/Manila rather than as 14:00
-    // UTC so it stays correct if the schedule is ever read by a human.
-    schedule: '0 22 * * *',
+    // 22:05, NOT 22:00. The boxes take their own daily meter reading at
+    // 22:00 PHT exactly (daily_at_utc = 14 in the Lua), so running on the
+    // same minute is a race: whoever loses, this function reads yesterday's
+    // latest/kWh and books a ~24h-stale value as today's. Five minutes is
+    // far more than the push needs and still well inside the day.
+    // Expressed in Asia/Manila rather than as 14:05 UTC so it stays correct
+    // if the schedule is ever read by a human.
+    schedule: '5 22 * * *',
     timeZone: 'Asia/Manila',
     timeoutSeconds: 120,
     maxInstances: 1,
