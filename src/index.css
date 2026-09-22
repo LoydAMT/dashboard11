@@ -481,6 +481,86 @@ body {
   margin-top: 3px;
 }
 
+/* ------------------------------------------------------------------
+   Tag gauge
+
+   The alert zones are always the first and last 10% of the sweep, so the
+   picture means the same thing on every card no matter what the numbers
+   are. Colours reuse the existing alarm tokens rather than introducing a
+   second vocabulary for the same idea.
+   ------------------------------------------------------------------ */
+.gauge {
+  position: relative;
+  margin-top: 2px;
+}
+
+.gauge-svg {
+  display: block;
+  width: 100%;
+  height: auto;
+  overflow: visible;
+}
+
+.gauge-track {
+  stroke: var(--surface-2);
+  stroke-linecap: round;
+}
+
+.gauge-zone-lo { stroke: var(--alarm-lo); opacity: .75; }
+.gauge-zone-hi { stroke: var(--alarm-hi); opacity: .75; }
+
+/* An inferred scale is a description of recent behaviour, not a level a
+   person chose. It is drawn in the neutral border colour so it can never be
+   mistaken for a configured threshold. */
+.gauge-inferred .gauge-zone-lo,
+.gauge-inferred .gauge-zone-hi {
+  stroke: var(--border-strong);
+  opacity: .55;
+}
+
+.gauge-tick {
+  stroke: var(--surface);
+  stroke-width: 1.5;
+}
+
+.gauge-needle {
+  stroke: var(--text);
+  stroke-width: 3;
+}
+
+.gauge-alarm-high .gauge-needle { stroke: var(--alarm-hi); }
+.gauge-alarm-low  .gauge-needle { stroke: var(--alarm-lo); }
+
+.gauge-offscale {
+  fill: var(--text-dim);
+  font-size: 9px;
+}
+
+/* A stale reading draws the scale but no needle - the position of an old
+   value is not a fact about now. */
+.gauge-stale .gauge-track { stroke: var(--surface-2); }
+.gauge-stale .gauge-zone-lo,
+.gauge-stale .gauge-zone-hi { opacity: .3; }
+
+/* The number sits inside the arc rather than beneath it, so the card stays
+   the same height it was before the gauge existed. */
+.gauge-readout {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  display: flex;
+  align-items: baseline;
+  justify-content: center;
+  gap: 4px;
+  pointer-events: none;
+}
+
+.gauge .card-number { font-size: 1.55rem; line-height: 1.1; }
+.gauge .card-unit { font-size: .78rem; }
+
+.card-limits-inferred { font-style: italic; }
+
 /* Boolean tags read as a state, never as 1.0 / 0.0. */
 .state-pill {
   display: inline-block;

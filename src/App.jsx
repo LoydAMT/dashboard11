@@ -125,6 +125,12 @@ function Dashboard() {
   const latest = useRtdbValue(deviceId ? `devices/${deviceId}/latest` : null, ready)
   const tags = useRtdbValue(deviceId ? `devices/${deviceId}/tags` : null, ready)
   const status = useRtdbValue(deviceId ? `devices/${deviceId}/status` : null, ready)
+  // Alert thresholds, so a card can draw where its alert zones are. Read
+  // per device and deliberately NOT treated as required: an account without
+  // read access here (or a device with nothing configured) simply gets tags
+  // with no thresholds, and each gauge falls back to a scale inferred from
+  // recent readings. A denied read is a normal state, not an error to show.
+  const alertRules = useRtdbValue(deviceId ? `alertRules/${deviceId}` : null, ready)
 
   const now = useNow(1000)
 
@@ -164,9 +170,25 @@ function Dashboard() {
       const ownAge = tag.ts != null ? now - tag.ts : null
       const tagThresholdMs = tagStalenessThreshold(tag.intervalMs)
       const stale = systemStale || ownAge == null || ownAge > tagThresholdMs
-      return { ...tag, unit: displayUnit(tag), stale, alarm: stale ? 'unknown' : limitState(tag), ownAge }
+      // Thresholds come from alertRules/, which is where the admin page
+      // writes them and where the server alert engine reads them. The
+      // device's own tags/ node carries loLimit/hiLimit fields that the
+      // pusher has never populated, so those stay as the fallback and are
+      // in practice always null - keeping them means a box that DOES start
+      // publishing its own limits still works without a change here.
+      const rule = alertRules.data?.[tag.key]
+      const loLimit = numOr(rule?.lo, tag.loLimit)
+      const hiLimit = numOr(rule?.hi, tag.hiLimit)
+      const withRule = { ...tag, loLimit, hiLimit }
+      return {
+        ...withRule,
+        unit: displayUnit(tag),
+        stale,
+        alarm: stale ? 'unknown' : limitState(withRule),
+        ownAge,
+      }
     }),
-    [tagListAll, now, systemStale],
+    [tagListAll, now, systemStale, alertRules.data],
   )
 
   const alertCenter = useAlertCenter({
@@ -406,6 +428,7 @@ function Dashboard() {
                   onSelect={toggleTag}
                   nowMs={now}
                   session={alertCenter.sessions[tag.key]}
+                  samples={alertCenter.samples[tag.key]}
                 />
               )
             })}
@@ -551,6 +574,11 @@ function Dashboard() {
     </div>
   )
 }
+
+// A configured threshold wins over the device's own published limit; both
+// being absent is the normal case today and means "no threshold".
+const numOr = (v, fallback) =>
+  (typeof v === 'number' && Number.isFinite(v) ? v : fallback ?? null)
 
 // Stands in for "the user has chosen to show nothing", which an empty array
 // cannot express without being mistaken for "no choice made yet". A forward

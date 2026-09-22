@@ -225,8 +225,23 @@
     // on a reading far outside a tag's own recent range, whether or not a
     // fixed threshold exists.
     "alertRules": {
+      // Admin-wide read: lets the admin page list every device's thresholds
+      // in one place. A .read CASCADES in this database, so this grant alone
+      // would be the whole story - the per-device grant below can only ADD
+      // to it, never take away from it.
       ".read": "auth != null && root.child('admins/'+auth.uid).val() === true",
       "$deviceId": {
+        // A tenant reads the thresholds for devices they can already see,
+        // and nothing else. This is what lets the gauge on a tag card draw
+        // its alert zones: without it the card cannot know where the zones
+        // are and falls back to a scale inferred from recent readings.
+        //
+        // It leaks nothing across tenants - the condition is the same
+        // viewer-or-operator-or-admin test that already governs the
+        // telemetry itself, so it says only "you may see the alert levels
+        // for a meter whose readings you may already see".
+        ".read": "auth != null && auth.token.firebase.sign_in_provider !== 'anonymous' && (root.child('devices/'+$deviceId+'/viewers/'+auth.uid).val() === true || root.child('devices/'+$deviceId+'/operators/'+auth.uid).val() === true || root.child('admins/'+auth.uid).val() === true)",
+
         "$tagKey": {
           ".write": "auth != null && root.child('admins/'+auth.uid).val() === true",
 

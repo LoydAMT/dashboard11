@@ -3,6 +3,13 @@ import { loadLog, saveLog, makeAlert, isSpike } from '../lib/alerts'
 
 const TOAST_LIFE_MS = { critical: 15000, warning: 10000, info: 6000 }
 const SPIKE_WINDOW = 24
+// The gauge on a tag card centres itself on the mean of recent readings when
+// no threshold is configured. It wants a longer memory than spike detection
+// does - a spike is about the last few moments, a gauge scale is about where
+// this tag normally sits - so one buffer is kept at the longer length and the
+// spike test is handed its own shorter tail. Changing this does NOT change
+// spike sensitivity; SPIKE_WINDOW alone controls that.
+const GAUGE_WINDOW = 100
 
 /**
  * Turns "the numbers changed" into "something happened worth telling someone
@@ -27,11 +34,13 @@ export function useAlertCenter({ deviceId, tags, connectionLevel, enabled }) {
   const [log, setLog] = useState(() => loadLog(deviceId))
   const [toasts, setToasts] = useState([])
   const [sessions, setSessions] = useState({}) // tagKey -> {episodes, closedMs, activeSince}
+  const [samples, setSamples] = useState({})   // tagKey -> recent values, oldest first
 
   useEffect(() => {
     setLog(loadLog(deviceId))
     setToasts([])
     setSessions({})
+    setSamples({})
     prevAlarm.current = new Map()
     prevLevel.current = null
     buffers.current = new Map()
@@ -58,6 +67,11 @@ export function useAlertCenter({ deviceId, tags, connectionLevel, enabled }) {
 
   useEffect(() => {
     if (!enabled) return
+
+    // Set when any tag contributed a genuinely new reading this pass, so the
+    // published sample snapshot is rebuilt only then rather than on every
+    // one-second render tick.
+    let sampled = false
 
     if (prevLevel.current != null && prevLevel.current !== connectionLevel) {
       if (connectionLevel === 'disconnected' && prevLevel.current !== 'disconnected') {
@@ -125,7 +139,11 @@ export function useAlertCenter({ deviceId, tags, connectionLevel, enabled }) {
         if (lastTs.current.get(tag.key) !== tag.ts) {
           lastTs.current.set(tag.key, tag.ts)
           const buf = buffers.current.get(tag.key) || []
-          if (!tag.stale && tag.alarm !== 'high' && tag.alarm !== 'low' && isSpike(buf, tag.value)) {
+          // slice(-SPIKE_WINDOW): the buffer is now longer than the spike
+          // test's window, and widening that window would quietly make
+          // spikes harder to trigger.
+          const spikeBuf = buf.slice(-SPIKE_WINDOW)
+          if (!tag.stale && tag.alarm !== 'high' && tag.alarm !== 'low' && isSpike(spikeBuf, tag.value)) {
             record(makeAlert({
               kind: 'spike',
               level: 'warning',
@@ -135,10 +153,21 @@ export function useAlertCenter({ deviceId, tags, connectionLevel, enabled }) {
             }))
           }
           buf.push(tag.value)
-          if (buf.length > SPIKE_WINDOW) buf.shift()
+          if (buf.length > GAUGE_WINDOW) buf.shift()
           buffers.current.set(tag.key, buf)
+          sampled = true
         }
       }
+    }
+    // Buffers live in a ref so spike detection can mutate them without
+    // re-rendering, but the gauges need to READ them during render, and
+    // reading a ref while rendering is exactly how you get a torn value.
+    // So a copy is published to state, once per batch rather than once per
+    // sample, and only when a genuinely new reading arrived.
+    if (sampled) {
+      const snapshot = {}
+      for (const [k, v] of buffers.current) snapshot[k] = v.slice()
+      setSamples(snapshot)
     }
     // tags is rebuilt every render; only the values read above matter, and
     // each is compared against a ref rather than relied on for its identity.
@@ -151,5 +180,5 @@ export function useAlertCenter({ deviceId, tags, connectionLevel, enabled }) {
     saveLog(deviceId, [])
   }
 
-  return { toasts, dismissToast, log, clearLog, sessions }
+  return { toasts, dismissToast, log, clearLog, sessions, samples }
 }
