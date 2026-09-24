@@ -91,8 +91,23 @@ export function gaugeScale({ value, lo = null, hi = null, samples = [] }) {
     return null
   }
 
-  const min = centre - halfWidth
-  const max = centre + halfWidth
+  let min = centre - halfWidth
+  let max = centre + halfWidth
+
+  // A tag with only a HIGH threshold has no meaningful bottom end, and
+  // centring it on recent readings pushes the scale below zero - which
+  // matters now that the axis is labelled: "-4.85 A" on a current dial is
+  // not a quantity, it is an artefact. When nothing has ever gone negative,
+  // zero is the honest floor. hi stays on its 90% mark either way, so the
+  // guarantee the whole gauge rests on is untouched.
+  if (hasHi && !hasLo && min < 0 && hi > 0) {
+    const everNegative = usable.some((v) => v < 0) || (num(value) && value < 0)
+    if (!everNegative) {
+      min = 0
+      max = hi / 0.9
+    }
+  }
+
   const at = (v) => (v - min) / (max - min)
 
   return {
@@ -114,5 +129,40 @@ export function gaugeScale({ value, lo = null, hi = null, samples = [] }) {
     // tag", not "past a number a person chose". Presenting a guess in the
     // same red as a real threshold would be a lie about where it came from.
     inferred,
+    ticks: ticksFor(min, max),
   }
+}
+
+/**
+ * Six evenly spaced labelled marks, rounded for reading rather than for
+ * precision - the dial is for "roughly where am I", the printed number
+ * underneath is for the actual value.
+ *
+ * The marks are spaced by POSITION, not snapped to round numbers, because
+ * the ends of this scale are load-bearing: they are exactly the alert
+ * thresholds. Snapping the axis would drag the coloured zones off the 10%
+ * marks that make every card on the wall comparable.
+ */
+export function ticksFor(min, max, count = 6) {
+  const span = max - min
+  if (!(span > 0)) return []
+  // Decimals from the span, not from each value, so the labels line up
+  // instead of mixing "0" with "11.11".
+  const step = span / (count - 1)
+  const dp = step >= 0.5 ? 0 : step >= 0.05 ? 1 : step >= 0.005 ? 2 : 3
+
+  const build = (n) => Array.from({ length: n }, (_, i) => {
+    const pct = i / (n - 1)
+    return { pct, label: (min + span * pct).toFixed(dp) }
+  })
+
+  // Six marks is the default, but a scale that needs long labels - a tight
+  // range forcing decimals, or a tag reading in the hundreds of thousands -
+  // crowds them into each other on a card this size. Decided on the rendered
+  // WIDTH rather than on decimal places, so both causes are handled by one
+  // rule. Three marks still says low / middle / high, which is all a
+  // crowded axis can honestly convey anyway.
+  const ticks = build(count)
+  const widest = Math.max(...ticks.map((t) => t.label.length))
+  return widest >= 5 ? build(3) : ticks
 }

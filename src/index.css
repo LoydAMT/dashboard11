@@ -484,14 +484,15 @@ body {
 /* ------------------------------------------------------------------
    Tag gauge
 
-   The alert zones are always the first and last 10% of the sweep, so the
-   picture means the same thing on every card no matter what the numbers
-   are. Colours reuse the existing alarm tokens rather than introducing a
+   A 250 degree dial. The alert zones are always the first and last 10% of
+   the sweep, so the picture means the same thing on every card no matter
+   what the numbers are - which is what makes a row of them comparable at a
+   glance. Colours reuse the existing alarm tokens rather than introducing a
    second vocabulary for the same idea.
    ------------------------------------------------------------------ */
 .gauge {
   position: relative;
-  margin-top: 2px;
+  margin-top: 4px;
 }
 
 .gauge-svg {
@@ -506,45 +507,79 @@ body {
   stroke-linecap: round;
 }
 
-.gauge-zone { stroke-linecap: round; }
-.gauge-zone-lo { stroke: var(--alarm-lo); opacity: .75; }
-.gauge-zone-hi { stroke: var(--alarm-hi); opacity: .75; }
+/* How far along the reading sits. Deliberately quieter than the zones: it
+   answers "how much", the zones answer "is this a problem". */
+.gauge-fill {
+  stroke: var(--accent);
+  stroke-linecap: round;
+  opacity: .5;
+  transition: d .45s ease;
+}
 
-/* An inferred scale is a description of recent behaviour, not a level a
-   person chose. It is drawn in the neutral border colour so it can never be
+.gauge-alarm-high .gauge-fill { stroke: var(--alarm-hi); opacity: .38; }
+.gauge-alarm-low  .gauge-fill { stroke: var(--alarm-lo); opacity: .38; }
+
+.gauge-zone { stroke-linecap: round; }
+.gauge-zone-lo { stroke: var(--alarm-lo); }
+.gauge-zone-hi { stroke: var(--alarm-hi); }
+
+/* An inferred scale describes recent behaviour rather than a level a person
+   chose, so it is drawn in the neutral border colour and can never be
    mistaken for a configured threshold. */
 .gauge-inferred .gauge-zone-lo,
 .gauge-inferred .gauge-zone-hi {
   stroke: var(--border-strong);
-  opacity: .55;
+  opacity: .5;
+}
+
+.gauge-tick {
+  stroke: var(--text-faint);
+  stroke-width: 1;
+  opacity: .5;
+}
+
+.gauge-tick-label {
+  fill: var(--text-faint);
+  font-size: 6.5px;
+  font-variant-numeric: tabular-nums;
 }
 
 .gauge-needle {
   stroke: var(--text);
-  stroke-width: 3;
+  stroke-width: 2.4;
+  transition: x1 .45s ease, y1 .45s ease, x2 .45s ease, y2 .45s ease;
+}
+
+.gauge-hub {
+  fill: var(--surface);
+  stroke: var(--text);
+  stroke-width: 2;
 }
 
 .gauge-alarm-high .gauge-needle { stroke: var(--alarm-hi); }
+.gauge-alarm-high .gauge-hub { stroke: var(--alarm-hi); }
 .gauge-alarm-low  .gauge-needle { stroke: var(--alarm-lo); }
+.gauge-alarm-low  .gauge-hub { stroke: var(--alarm-lo); }
 
 .gauge-offscale {
-  fill: var(--text-dim);
-  font-size: 9px;
+  fill: var(--alarm-hi);
+  font-size: 8px;
+  font-weight: 700;
 }
+.gauge-alarm-low .gauge-offscale { fill: var(--alarm-lo); }
 
-/* A stale reading draws the scale but no needle - the position of an old
-   value is not a fact about now. */
-.gauge-stale .gauge-track { stroke: var(--surface-2); }
+/* A stale reading draws the scale but no needle and no fill. */
 .gauge-stale .gauge-zone-lo,
-.gauge-stale .gauge-zone-hi { opacity: .3; }
+.gauge-stale .gauge-zone-hi { opacity: .28; }
+.gauge-stale .gauge-tick-label { opacity: .6; }
 
-/* The number sits inside the arc rather than beneath it, so the card stays
-   the same height it was before the gauge existed. */
+/* The reading sits in the dial's open bottom, where the sweep leaves a gap
+   on purpose, so the card carries one focal point rather than two. */
 .gauge-readout {
   position: absolute;
   left: 0;
   right: 0;
-  bottom: 0;
+  bottom: 4%;
   display: flex;
   align-items: baseline;
   justify-content: center;
@@ -552,8 +587,12 @@ body {
   pointer-events: none;
 }
 
-.gauge .card-number { font-size: 1.55rem; line-height: 1.1; }
-.gauge .card-unit { font-size: .78rem; }
+.gauge .card-number { font-size: 1.5rem; line-height: 1.05; }
+.gauge .card-unit { font-size: .76rem; }
+
+@media (prefers-reduced-motion: reduce) {
+  .gauge-fill, .gauge-needle { transition: none; }
+}
 
 .card-limits-inferred { font-style: italic; }
 
