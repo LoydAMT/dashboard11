@@ -786,8 +786,17 @@ exports.kwhDailySnapshot = onSchedule(
           // Yesterday's record, for the day-over-day delta. Ordered by the
           // document id, which is the date key, so this is the most recent
           // snapshot regardless of when it was written.
+          // The most recent day STRICTLY BEFORE today, by the dateKey field
+          // every record carries. This used to order by document id
+          // descending, which needs an index nobody created - so every run
+          // threw for every device and not one daily reading was ever
+          // recorded. A range and a sort on one ordinary field are served
+          // by Firestore's automatic indexes. `<` rather than "latest" also
+          // stops a same-day re-run from treating today's own record as
+          // yesterday's and billing a day of zero.
           fs.collection('devices').doc(device).collection('kwhDaily')
-            .orderBy('__name__', 'desc').limit(1).get(),
+            .where('dateKey', '<', dateKey)
+            .orderBy('dateKey', 'desc').limit(1).get(),
         ]);
 
         const previous = prevSnap.empty ? null : prevSnap.docs[0].data();
