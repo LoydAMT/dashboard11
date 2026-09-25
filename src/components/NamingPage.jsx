@@ -6,6 +6,7 @@ import { useDeviceAccess } from '../hooks/useDeviceAccess'
 import { useRtdbValue } from '../hooks/useRtdbValue'
 import { useIsAdmin } from '../hooks/useIsAdmin'
 import { AlertThresholds } from './AlertThresholds'
+import { MallDisplay } from './MallDisplay'
 import { SignIn } from './SignIn'
 
 // Renaming stays one specific account, deliberately - it is a personal
@@ -136,6 +137,10 @@ function DeviceAdminCard({ deviceId, mayRename }) {
     <section className="admin-card">
       <NamingRow deviceId={deviceId} mayRename={mayRename} />
       <AlertThresholds deviceId={deviceId} />
+      <div className="admin-sub">
+        <h4>Mall page</h4>
+        <MallDisplay deviceId={deviceId} />
+      </div>
     </section>
   )
 }

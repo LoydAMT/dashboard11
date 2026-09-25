@@ -11,12 +11,10 @@
 // and keeps the 10%/90% guarantee arithmetic in exactly one place.
 //
 // WHERE THE SCALE COMES FROM WHEN NOTHING IS CONFIGURED
-// A tag with no thresholds still gets a gauge, centred on the mean of its
-// recent readings, with the ends at the point where the SPIKE DETECTOR would
-// fire (src/lib/alerts.js). So the ends always mean the same thing: "the
-// system would raise something about this reading". For a ruled tag that is
-// the threshold you set; for an unruled one it is a spike. Nothing on the
-// gauge is invented - both boundaries are real alarm boundaries.
+// A tag with no thresholds still gets a dial, spanning the range it has
+// actually been seen in recently. That scale carries NO coloured zones -
+// nothing on it is a level anyone chose, and drawing one would be a lie
+// about where it came from. The tile says "no alerts set" in words instead.
 
 // Mirrors src/lib/alerts.js. Kept as its own copy rather than imported so
 // the gauge cannot silently change shape if the spike test is ever tuned for
@@ -48,19 +46,27 @@ export function spread(samples) {
  * lands here, which is correct: a gauge implies a range to sit inside, and a
  * meter total has none.
  */
-export function gaugeScale({ value, lo = null, hi = null, samples = [], stats: given = null }) {
+export function gaugeScale({ value, lo = null, hi = null, samples = [], range = null }) {
   const num = (v) => typeof v === 'number' && Number.isFinite(v)
   const usable = samples.filter(num)
   const hasLo = num(lo)
   const hasHi = num(hi)
-  // `stats` lets a caller supply the baseline instead of the readings it was
-  // derived from. The mall page needs this: it shows ninety tenants at once
-  // and cannot hold ninety sample buffers, so the server - which already has
-  // the minute rollups in hand - sends two numbers per tag instead of a
-  // dozen. The RULE that turns a baseline into a scale stays here, in one
-  // place, rather than being reimplemented on the server and drifting.
-  const stats = (given && num(given.mean) && num(given.halfWidth))
-    ? given
+  // `range` lets a caller supply an OBSERVED min..max instead of the
+  // readings it came from. The mall page needs this - it shows ninety
+  // tenants at once and cannot hold ninety sample buffers - and it is also
+  // more honest than a statistical band.
+  //
+  // WHY OBSERVED EXTREMES AND NOT 4 SIGMA: the first version derived the
+  // band from the standard deviation of MINUTE AVERAGES and then put an
+  // INSTANTANEOUS reading on it. Averaging smooths variance away, so the
+  // band came out far narrower than the live value's real swing and the
+  // needle sat pinned to one end with an off-scale arrow most of the time.
+  // A dial whose needle is usually off the dial is worse than no dial.
+  const observed = (range && num(range.min) && num(range.max) && range.max > range.min)
+    ? range
+    : null
+  const stats = observed
+    ? { mean: (observed.min + observed.max) / 2, halfWidth: (observed.max - observed.min) / 2 }
     : (usable.length >= MIN_SAMPLES ? spread(usable) : null)
 
   let centre
@@ -127,15 +133,18 @@ export function gaugeScale({ value, lo = null, hi = null, samples = [], stats: g
     // always legible even when the needle has run out of room.
     pct: num(value) ? Math.min(1, Math.max(0, at(value))) : null,
     offScale: num(value) ? (at(value) < 0 ? 'low' : at(value) > 1 ? 'high' : null) : null,
-    // Zone edges as fractions. A threshold that was configured lands on
-    // exactly 0.1 / 0.9 by construction; an inferred scale gets both.
-    loStop: hasLo || inferred ? 0.1 : null,
-    hiStop: hasHi || inferred ? 0.9 : null,
-    loValue: hasLo ? lo : inferred ? min + (max - min) * 0.1 : null,
-    hiValue: hasHi ? hi : inferred ? min + (max - min) * 0.9 : null,
-    // `inferred` drives the muted styling: these ends are "unusual for this
-    // tag", not "past a number a person chose". Presenting a guess in the
-    // same red as a real threshold would be a lie about where it came from.
+    // Zone edges as fractions, landing on exactly 0.1 / 0.9 by
+    // construction. NO zones on an inferred scale. They would be grey stubs at each end
+    // that look exactly like the real thing but mark nothing anyone chose -
+    // the first version drew them and they read as smudges on the arc. An
+    // unruled tag shows its recent range and its needle, and the tile says
+    // "no alerts set" in words.
+    loStop: hasLo ? 0.1 : null,
+    hiStop: hasHi ? 0.9 : null,
+    loValue: hasLo ? lo : null,
+    hiValue: hasHi ? hi : null,
+    // Tells the caller this scale describes recent behaviour rather than a
+    // configured level, so it can say so.
     inferred,
     ticks: ticksFor(min, max),
   }

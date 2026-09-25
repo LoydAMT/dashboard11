@@ -2203,3 +2203,42 @@ body {
 .mall-entry:hover { border-color: var(--border-strong); border-left-color: var(--accent); }
 .mall-entry-name { font-weight: 580; }
 .mall-entry-count { font-size: .78rem; color: var(--text-faint); }
+
+.tenant-extras {
+  display: flex;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 2px;
+  font-size: .72rem;
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+}
+.tenant-extra b { color: var(--text); font-weight: 620; }
+
+/* Mall display picker on the admin page */
+.admin-sub { margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--grid); }
+.admin-sub h4 { margin: 0 0 4px; font-size: .84rem; }
+.admin-hint-quiet { color: var(--text-faint); font-style: italic; }
+.malldisp-tags { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+.malldisp-tag {
+  font: inherit;
+  font-size: .78rem;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text-dim);
+  cursor: pointer;
+}
+.malldisp-tag.is-on {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: var(--live-bg);
+  font-weight: 600;
+}
+.malldisp-check { width: 9px; display: inline-block; }
+.malldisp-unit { color: var(--text-faint); font-weight: 400; }

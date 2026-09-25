@@ -1255,31 +1255,45 @@ test('mallOverview: a dial arrives with its own thresholds, no extra read', () =
     rules: { Current: { hi: 32 } },
   });
   assert.equal(r.values.Current.hi, 32);
-  // No baseline shipped when a threshold already sets the scale - those
-  // bytes would be re-read by every viewer for nothing.
-  assert.equal(r.values.Current.mean, undefined);
+  // No range shipped when a threshold already sets the scale - those bytes
+  // would be re-read by every viewer for nothing.
+  assert.equal(r.values.Current.rmin, undefined);
 });
 
-test('mallOverview: an unruled tag ships a baseline instead', () => {
+test('mallOverview: an unruled tag ships the range it was SEEN in', () => {
+  // Rollups carry the instantaneous extremes. Using them is what keeps a
+  // live needle on the dial; a band from the spread of the AVERAGES is far
+  // too narrow and pins the needle off the end.
   const windows = Array.from({ length: 12 }, (_, i) => ({
-    minute: i, byTag: { Current: { avg: 3.4 + (i % 2) * 0.1 } },
+    minute: i, byTag: { Current: { min: 1.2, avg: 3.4 + (i % 2) * 0.1, max: 9.6 } },
   }));
   const r = MO.tenantRow({
     deviceId: 'd', now: 1000, status: { lastSeen: 1000 }, offline: false,
-    latest: { Current: { value: 3.45 } }, rules: {}, windows,
+    latest: { Current: { value: 9.5 } }, rules: {}, windows,
   });
-  assert.ok(typeof r.values.Current.mean === 'number', 'no baseline shipped');
-  assert.ok(r.values.Current.hw > 0, 'zero-width baseline');
-  assert.equal(r.values.Current.lo, undefined);
+  assert.ok(r.values.Current.rmin < 1.2, 'range must be padded below the seen min');
+  assert.ok(r.values.Current.rmax > 9.6, 'range must be padded above the seen max');
+  // The live reading has to land INSIDE the dial, which was the whole bug.
+  assert.ok(r.values.Current.rmin < 9.5 && 9.5 < r.values.Current.rmax);
 });
 
-test('mallOverview: too few rollups means no baseline, not a fabricated one', () => {
-  const windows = [{ minute: 0, byTag: { Current: { avg: 3.4 } } }];
+test('mallOverview: a dead-constant tag still gets a dial with width', () => {
+  const windows = Array.from({ length: 10 }, (_, i) => ({
+    minute: i, byTag: { Current: { min: 5, avg: 5, max: 5 } },
+  }));
   const r = MO.tenantRow({
     deviceId: 'd', now: 1000, status: { lastSeen: 1000 }, offline: false,
-    latest: { Current: { value: 3.4 } }, rules: {}, windows,
+    latest: { Current: { value: 5 } }, rules: {}, windows,
   });
-  assert.equal(r.values.Current.mean, undefined);
+  assert.ok(r.values.Current.rmax > r.values.Current.rmin, 'collapsed to a point');
+});
+
+test('mallOverview: no rollups means no range, not a fabricated one', () => {
+  const r = MO.tenantRow({
+    deviceId: 'd', now: 1000, status: { lastSeen: 1000 }, offline: false,
+    latest: { Current: { value: 3.4 } }, rules: {}, windows: [],
+  });
+  assert.equal(r.values.Current.rmin, undefined);
   assert.equal(r.values.Current.v, 3.4, 'the reading itself must still be there');
 });
 

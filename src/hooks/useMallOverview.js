@@ -82,8 +82,19 @@ export function rankTenants(tenants, sortKey = 'attention') {
  * figure and gets its own line under the dial, which is where the reference
  * panel meters put it too.
  */
-export function primaryTag(tenant) {
+export function primaryTag(tenant, chosen = null) {
   const values = tenant?.values || {}
+  // An explicit choice from the admin page wins. The automatic guess below
+  // is right often enough to be a sensible default and wrong often enough
+  // to need overriding - a cold store is watched on temperature, a pump on
+  // pressure, and neither is in the preferred list.
+  if (chosen) {
+    for (const key of Object.keys(chosen)) {
+      if (chosen[key] && values[key] && typeof values[key].v === 'number') {
+        return { key, entry: values[key] }
+      }
+    }
+  }
   const preferred = ['Current', 'Power', 'kW', 'Voltage']
   for (const key of preferred) {
     if (values[key] && typeof values[key].v === 'number') {
@@ -122,4 +133,20 @@ export function recentAlerts(tenants, limit = 6) {
     .filter((t) => t.lastAlert && typeof t.lastAlert.ts === 'number')
     .sort((a, b) => b.lastAlert.ts - a.lastAlert.ts)
     .slice(0, limit)
+}
+
+/**
+ * The other chosen readings, shown as plain numbers under the dial.
+ *
+ * A tile with three dials is unreadable at the size a wall of ninety
+ * demands, so only the first choice gets an arc. Excludes whichever tag is
+ * already the dial, and the accumulator, which has its own line.
+ */
+export function secondaryTags(tenant, chosen, primaryKey) {
+  if (!chosen) return []
+  const values = tenant?.values || {}
+  return Object.keys(chosen)
+    .filter((k) => chosen[k] && k !== primaryKey && !/kwh/i.test(k))
+    .filter((k) => values[k] && typeof values[k].v === 'number')
+    .map((k) => ({ key: k, entry: values[k] }))
 }

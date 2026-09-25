@@ -27,26 +27,38 @@
 
 const STALE_AFTER_MS = 60000;   // matches the alert engine's offline test
 
-// Mirrors the spike test in alertEngine.js, and the gauge's own copy in
-// src/lib/gauge.js. This is plain statistics over the minute rollups the
-// sweep already holds - the RULE that turns it into a dial (thresholds at
-// 10% and 90%) lives only in gauge.js and is not repeated here. Shipping
-// these two numbers instead of the readings they came from is what lets a
-// mall page draw ninety dials without holding ninety sample buffers.
-const Z_THRESHOLD = 4;
-const MIN_DELTA_FRACTION = 0.02;
-const MIN_SAMPLES = 8;
+// The range a tag has actually been seen in, from the minute rollups the
+// sweep already holds. Sent instead of the readings themselves so a mall
+// page can draw ninety dials without holding ninety sample buffers.
+//
+// EXTREMES, NOT A SIGMA BAND. The rollups carry min and max per minute, so
+// this is the true swing of the instantaneous value. Deriving a band from
+// the standard deviation of the minute AVERAGES instead - which is what
+// this did first - produces something far too narrow, because averaging
+// smooths the variance away. The live needle then sat pinned to one end of
+// the dial with an off-scale arrow, on tag after tag.
+//
+// Padded by 5% so a reading sitting exactly at its recent extreme is not
+// drawn touching the very end of the arc.
+const RANGE_PAD = 0.05;
 
-function baselineOf(values) {
-  const nums = (values || []).filter(isNum);
-  if (nums.length < MIN_SAMPLES) return null;
-  const mean = nums.reduce((a, b) => a + b, 0) / nums.length;
-  const variance = nums.reduce((a, b) => a + (b - mean) ** 2, 0) / nums.length;
-  const sd = Math.sqrt(variance);
-  return {
-    mean: round(mean),
-    halfWidth: round(Math.max(sd * Z_THRESHOLD, Math.abs(mean) * MIN_DELTA_FRACTION, 1e-9)),
-  };
+function rangeOf(rollups) {
+  let lo = Infinity;
+  let hi = -Infinity;
+  for (const r of rollups || []) {
+    if (!r) continue;
+    if (isNum(r.min) && r.min < lo) lo = r.min;
+    if (isNum(r.max) && r.max > hi) hi = r.max;
+  }
+  if (!isNum(lo) || !isNum(hi) || hi < lo) return null;
+  if (hi === lo) {
+    // A dead-constant tag still needs width, or the dial collapses to a
+    // point and every reading reads as both ends at once.
+    const pad = Math.max(Math.abs(lo) * 0.02, 1e-6);
+    return { min: round(lo - pad), max: round(hi + pad) };
+  }
+  const pad = (hi - lo) * RANGE_PAD;
+  return { min: round(lo - pad), max: round(hi + pad) };
 }
 
 // Six significant-ish digits. These ride in a node re-read by every viewer,
@@ -96,11 +108,12 @@ function tenantRow({
     : states.includes('low') ? 'low'
     : 'ok';
 
-  // Recent minute averages per tag, from rollups the sweep already read.
+  // Recent rollups per tag, from what the sweep already read. Kept whole
+  // rather than reduced to averages: the min and max are the point.
   const recent = {};
   for (const w of windows) {
     for (const [k, r] of Object.entries(w?.byTag || {})) {
-      if (r && isNum(r.avg)) (recent[k] = recent[k] || []).push(r.avg);
+      if (r) (recent[k] = recent[k] || []).push(r);
     }
   }
 
@@ -123,8 +136,8 @@ function tenantRow({
     // Only needed when there is no threshold to scale from - sending it
     // anyway would be bytes every viewer re-reads for nothing.
     if (!isNum(entry.lo) && !isNum(entry.hi)) {
-      const base = baselineOf(recent[k]);
-      if (base) { entry.mean = base.mean; entry.hw = base.halfWidth; }
+      const r = rangeOf(recent[k]);
+      if (r) { entry.rmin = r.min; entry.rmax = r.max; }
     }
     values[k] = entry;
   }

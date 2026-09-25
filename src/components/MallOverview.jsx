@@ -1,5 +1,6 @@
 import { useState } from 'react'
-import { useMallOverview, rankTenants, primaryTag, meterTag, recentAlerts } from '../hooks/useMallOverview'
+import { useRtdbValue } from '../hooks/useRtdbValue'
+import { useMallOverview, rankTenants, primaryTag, secondaryTags, meterTag, recentAlerts } from '../hooks/useMallOverview'
 import { useCompany } from '../hooks/useCompanies'
 import { gaugeScale } from '../lib/gauge'
 import { TagGauge } from './TagGauge'
@@ -24,6 +25,9 @@ import { formatAgo } from '../lib/time'
 export function MallOverview({ companyId, companyName, onOpenDevice, onClose, nowMs }) {
   const [sortKey, setSortKey] = useState('attention')
   const { loading, error, tenants, totals, updatedAt } = useMallOverview(companyId)
+  // One read for the whole estate's display preferences, set on the admin
+  // page. Per-device reads would be the fan-out this page exists to avoid.
+  const display = useRtdbValue('mallDisplay', true)
 
   if (error) {
     return (
@@ -118,8 +122,15 @@ export function MallOverview({ companyId, companyName, onOpenDevice, onClose, no
       )}
 
       <div className="mall-grid">
-        {rows.map((t) => (
-          <TenantTile key={t.id} tenant={t} nowMs={nowMs} onOpen={onOpenDevice} />
+        {rows.map((t, i) => (
+          <TenantTile
+            key={t.id}
+            tenant={t}
+            nowMs={nowMs}
+            onOpen={onOpenDevice}
+            live={i < LIVE_TILE_LIMIT}
+            chosen={display.data?.[t.id] || null}
+          />
         ))}
       </div>
     </div>
@@ -135,9 +146,24 @@ export function MallOverview({ companyId, companyName, onOpenDevice, onClose, no
  * ninety: every tile means the same thing, so "needle in the colour" reads
  * correctly without stopping to check any tile's numbers.
  */
-function TenantTile({ tenant, nowMs, onOpen }) {
-  const primary = primaryTag(tenant)
-  const meter = meterTag(tenant)
+function TenantTile({ tenant, nowMs, onOpen, live, chosen }) {
+  // LIVE OVERLAY. The projection refreshes every two minutes, which is fine
+  // for "which unit needs attention" and visibly wrong for a wall of
+  // needles - they sat still while the single-device dashboard moved every
+  // second. So the tiles on screen also subscribe to their own latest/ and
+  // draw that over the projected value.
+  //
+  // Capped by the caller, not done for every tenant: ninety live
+  // subscriptions is exactly the fan-out the projection exists to avoid.
+  // The projection still supplies everything else - thresholds, scale,
+  // alert state, the daily meter figure - so a tenant past the cap is a
+  // slightly staler needle, not a broken tile.
+  const liveLatest = useRtdbValue(live ? `devices/${tenant.id}/latest` : null, live)
+  const merged = mergeLive(tenant, liveLatest.data)
+
+  const primary = primaryTag(merged, chosen)
+  const extras = secondaryTags(merged, chosen, primary?.key)
+  const meter = meterTag(merged)
   const offline = tenant.alarm === 'offline'
   // The unit from the device's own tag metadata. Falling back to the tag key
   // keeps a box that never published a unit readable rather than blank.
@@ -147,10 +173,11 @@ function TenantTile({ tenant, nowMs, onOpen }) {
     value: primary.entry.v,
     lo: primary.entry.lo ?? null,
     hi: primary.entry.hi ?? null,
-    // Supplied by the server rather than derived here: this page holds no
-    // sample history for ninety tenants and is never going to.
-    stats: (typeof primary.entry.mean === 'number' && typeof primary.entry.hw === 'number')
-      ? { mean: primary.entry.mean, halfWidth: primary.entry.hw }
+    // The range this tag has actually been seen in, measured server-side
+    // from the minute rollups. Supplied rather than derived here because
+    // this page holds no sample history for ninety tenants.
+    range: (typeof primary.entry.rmin === 'number' && typeof primary.entry.rmax === 'number')
+      ? { min: primary.entry.rmin, max: primary.entry.rmax }
       : null,
   })
 
@@ -192,6 +219,18 @@ function TenantTile({ tenant, nowMs, onOpen }) {
         )}
       </div>
 
+      {/* Other chosen readings, as numbers. Only the first choice gets an
+          arc - three dials on one tile is unreadable at this size. */}
+      {extras.length > 0 && (
+        <div className="tenant-extras">
+          {extras.map((e) => (
+            <span key={e.key} className="tenant-extra">
+              <b>{fmt(e.entry.v)}</b> {e.entry.u || e.key}
+            </span>
+          ))}
+        </div>
+      )}
+
       <div className="tenant-meter">
         {meter ? <><b>{meter.entry.v.toLocaleString()}</b> kWh</> : <span>&nbsp;</span>}
         {tenant.kwh?.deltaKwh != null && (
@@ -215,6 +254,34 @@ function TenantTile({ tenant, nowMs, onOpen }) {
       )}
     </button>
   )
+}
+
+/**
+ * How many tiles hold their own live subscription.
+ *
+ * Sized so an ordinary site is entirely live while a large mall degrades to
+ * the two-minute projection rather than opening a connection per tenant.
+ * The ordering puts whatever needs attention first, so the tiles that keep
+ * updating are the ones worth watching.
+ */
+const LIVE_TILE_LIMIT = 24
+
+/**
+ * The projected row with any live readings laid over it.
+ *
+ * Only the VALUE is replaced. Thresholds, the observed range, the unit and
+ * the alert state all stay as projected - they are server-side facts, and
+ * recomputing a scale from a single live sample would make the dial jump
+ * about for no reason.
+ */
+function mergeLive(tenant, latest) {
+  if (!latest) return tenant
+  const values = { ...tenant.values }
+  for (const [k, v] of Object.entries(latest)) {
+    if (!v || typeof v.value !== 'number' || !Number.isFinite(v.value)) continue
+    values[k] = { ...(values[k] || {}), v: v.value }
+  }
+  return { ...tenant, values }
 }
 
 /**

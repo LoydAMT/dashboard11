@@ -258,6 +258,32 @@
       }
     },
 
+    // Which of a tenant's readings appear on the mall wall:
+    // mallDisplay/{deviceId}/{tagKey} = true.
+    //
+    // NOT under devices/{id}/tags - the box rewrites that node on every
+    // restart and would erase this with it, the same reason alertRules
+    // lives outside it.
+    //
+    // READ IS OPEN TO ANY SIGNED-IN ACCOUNT, and that is a deliberate
+    // widening rather than an oversight. The mall page needs the whole node
+    // in ONE read to lay out ninety tiles; scoping it per device would mean
+    // ninety reads, which is the fan-out the overview exists to prevent.
+    // What leaks is the fact that "device X shows its Current tag" - tag
+    // NAMES, never readings, never thresholds, never who owns what. A
+    // reading still requires membership of a company holding that device.
+    "mallDisplay": {
+      ".read": "auth != null && auth.token.firebase.sign_in_provider !== 'anonymous'",
+      "$deviceId": {
+        "$tagKey": {
+          ".write": "auth != null && root.child('admins/'+auth.uid).val() === true",
+          // Only the literal true. A tag is shown or it is absent; there is
+          // no third state, and nothing else may be smuggled in here.
+          ".validate": "newData.val() === true"
+        }
+      }
+    },
+
     // The landlord's rolled-up view of a multi-device company: every tenant's
     // live values, alert state and daily meter reading in one node.
     //
