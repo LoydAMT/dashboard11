@@ -30,6 +30,7 @@ import { VfdControl } from './components/VfdControl'
 import { SignIn } from './components/SignIn'
 import { DevicePicker } from './components/DevicePicker'
 import { MallOverview, MallEntry } from './components/MallOverview'
+import { MallAlertHistory } from './components/MallAlertHistory'
 import { NamingPage } from './components/NamingPage'
 import { ThemeToggle } from './components/ThemeToggle'
 import { AlertToasts } from './components/AlertToasts'
@@ -88,6 +89,8 @@ function Dashboard() {
   // single-device dashboard - the overview is an additional surface, not a
   // replacement, and a tenant with one device never sees it.
   const [mallView, setMallView] = useState(null)
+  // The company-wide alert log, shown in place of the tenant wall.
+  const [mallLog, setMallLog] = useState(false)
 
   // Auto-select the common case (exactly one device) without ever showing a
   // picker for it. A previously chosen device that has fallen out of the
@@ -382,12 +385,22 @@ function Dashboard() {
       {/* The landlord's page. Rendered INSTEAD of the device dashboard, so
           the ninety per-device subscriptions below are never mounted while
           it is open. */}
-      {mallView && (
+      {mallView && mallLog && (
+        <MallAlertHistory
+          companyId={mallView.id}
+          companyName={mallView.name}
+          onClose={() => setMallLog(false)}
+          onOpenDevice={(id) => { setChosenDeviceId(id); setMallView(null); setMallLog(false) }}
+        />
+      )}
+
+      {mallView && !mallLog && (
         <MallOverview
           companyId={mallView.id}
           companyName={mallView.name}
           nowMs={now}
           onOpenDevice={(id) => { setChosenDeviceId(id); setMallView(null) }}
+          onOpenLog={() => setMallLog(true)}
           onClose={() => setMallView(null)}
         />
       )}

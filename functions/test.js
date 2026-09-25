@@ -969,7 +969,69 @@ test('alertEngine: spike fires on rollups and carries the extreme, not the avera
   assert.equal(spikes.length, 1);
   assert.equal(spikes[0].value, 40, 'reported the average instead of the excursion');
   assert.equal(spikes[0].tagKey, 'Current');
-  assert.ok(state.buffers.Current.length > 0, 'baseline was not carried forward');
+  assert.ok(state.buffers.Current.hi.length > 0, 'high baseline was not carried forward');
+  assert.ok(state.buffers.Current.lo.length > 0, 'low baseline was not carried forward');
+});
+
+test('alertEngine: an ordinary tag does NOT spike every single minute', () => {
+  // THE REGRESSION THIS GUARDS. The first version compared each minute's MAX
+  // against a baseline of past AVERAGES. A minute's maximum sits above the
+  // mean of past averages by construction on any tag that moves at all, so
+  // the test fired on nearly every minute of every tag and the alert log
+  // filled with spikes for every device on every sweep - burying the alerts
+  // that actually mattered.
+  //
+  // This is a perfectly ordinary tag: steady average, real within-minute
+  // spread, no excursion anywhere. It must produce NO spikes.
+  const T = T0 + 400 * M;
+  const windows = [];
+  for (let i = 0; i < 40; i++) {
+    const wobble = (i % 5) * 0.03;
+    windows.push(win(T + i * M, 'Current', {
+      min: 3.0 + wobble, avg: 4.0 + wobble, max: 5.2 + wobble, n: 60,
+    }));
+  }
+  const { events } = evaluate({
+    device: 'd', windows, rules: {},
+    status: { lastSeen: T + 39 * M }, now: T + 39 * M,
+  });
+  const spikes = events.filter((e) => e.kind === 'spike');
+  assert.equal(spikes.length, 0,
+    `steady tag produced ${spikes.length} spike(s) in 40 minutes`);
+});
+
+test('alertEngine: a REAL excursion still fires after the bias fix', () => {
+  // The other half of the same guard: quietening the false positives must
+  // not quieten the true ones.
+  const T = T0 + 500 * M;
+  const windows = [];
+  for (let i = 0; i < 20; i++) {
+    windows.push(win(T + i * M, 'Current', { min: 3.0, avg: 4.0, max: 5.2, n: 60 }));
+  }
+  windows.push(win(T + 20 * M, 'Current', { min: 3.0, avg: 4.4, max: 48, n: 60 }));
+  const { events } = evaluate({
+    device: 'd', windows, rules: {},
+    status: { lastSeen: T + 20 * M }, now: T + 20 * M,
+  });
+  const spikes = events.filter((e) => e.kind === 'spike');
+  assert.equal(spikes.length, 1, 'a genuine excursion must still be caught');
+  assert.equal(spikes[0].value, 48);
+});
+
+test('alertEngine: a sag is caught as well as a surge', () => {
+  const T = T0 + 600 * M;
+  const windows = [];
+  for (let i = 0; i < 20; i++) {
+    windows.push(win(T + i * M, 'Voltage', { min: 228, avg: 230, max: 232, n: 60 }));
+  }
+  windows.push(win(T + 20 * M, 'Voltage', { min: 140, avg: 229, max: 232, n: 60 }));
+  const { events } = evaluate({
+    device: 'd', windows, rules: {},
+    status: { lastSeen: T + 20 * M }, now: T + 20 * M,
+  });
+  const spikes = events.filter((e) => e.kind === 'spike');
+  assert.equal(spikes.length, 1, 'a collapse in the minute minimum must register');
+  assert.equal(spikes[0].value, 140, 'reported the wrong extreme');
 });
 
 test('alertEngine: spike is suppressed while the tag is already in limit alarm', () => {
@@ -998,7 +1060,10 @@ test('alertEngine: spike baseline survives a restart via stored state', () => {
     device: 'd',
     windows: [win(T, 'Current', { min: 2, avg: 2.1, max: 40, n: 60 })],
     rules: {},
-    prevState: { buffers: { Current: flat(2, 12) }, lastMinute: T - M },
+    prevState: {
+      buffers: { Current: { hi: flat(2, 12), lo: flat(2, 12) } },
+      lastMinute: T - M,
+    },
     status: { lastSeen: T }, now: T,
   });
   assert.equal(events.filter((e) => e.kind === 'spike').length, 1,

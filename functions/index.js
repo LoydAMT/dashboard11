@@ -16,7 +16,7 @@ const { computeProjection, toUpdates } = require('./projectCompanyAccess');
 const { evaluate: evaluateAlerts, alertId } = require('./alertEngine');
 const { buildSnapshot, phDateKey } = require('./kwhSnapshot');
 const AF = require('./archiveFormat');
-const { listDevices, overviewCompanies } = require('./deviceRegistry');
+const { listDevices, overviewCompanies, companiesByDevice } = require('./deviceRegistry');
 const { tenantRow, rollUp } = require('./mallOverview');
 
 if (getApps().length === 0) {
@@ -405,6 +405,7 @@ exports.alertSweep = onSchedule(
     const since = now - 15 * 60000;
 
     const { companies, devices: sweepDevices } = await loadSweepContext();
+    const deviceCompanies = companiesByDevice(companies);
     // Filled as each device is evaluated, then projected into the landlord
     // view below. Built from work this sweep is doing anyway - the whole
     // reason the overview lives here rather than in a second sweep of its
@@ -462,6 +463,15 @@ exports.alertSweep = onSchedule(
         });
 
         if (events.length > 0) {
+          // Which companies this device belongs to, stamped onto the alert
+          // itself. It is what makes "every alert in this mall, newest
+          // first" ONE indexed collection-group query instead of ninety
+          // per-device reads fanned out from a browser.
+          //
+          // Denormalised on purpose: an alert is a record of what was true
+          // when it happened, so it keeps the ownership it had then even if
+          // the tenant later moves between companies.
+          const owning = deviceCompanies[device] || [];
           const batch = fs.batch();
           for (const ev of events) {
             const ref = fs.collection('devices').doc(device)
@@ -469,7 +479,11 @@ exports.alertSweep = onSchedule(
             // Deterministic id + set(): a re-run over the same window
             // overwrites with identical content instead of appending a
             // second copy of the same event.
-            batch.set(ref, { ...ev, recordedAt: FieldValue.serverTimestamp() });
+            batch.set(ref, {
+              ...ev,
+              companies: owning,
+              recordedAt: FieldValue.serverTimestamp(),
+            });
           }
           await batch.commit();
         }
@@ -607,10 +621,47 @@ exports.readAlerts = onRequest(
       res.status(403).json({ error: 'forbidden' }); return;
     }
 
-    const device = req.query.device;
-    if (typeof device !== 'string' || !device) { res.status(400).json({ error: 'device required' }); return; }
-
+    const limitOf = () => Math.min(500, Math.max(1, Number(req.query.limit) || 200));
+    const beforeOf = () => Number(req.query.before);
     const rtdb = getDatabase();
+
+    // COMPANY MODE: every alert across every tenant of one company, newest
+    // first. One collection-group query on the `companies` field the sweep
+    // stamps, so a mall of ninety costs the same single indexed read as a
+    // mall of three - the per-device alternative is ninety requests from a
+    // browser and gets slower the more tenants a landlord has.
+    const company = req.query.company;
+    if (typeof company === 'string' && company) {
+      // Membership of THAT company, checked the same way its overview node
+      // is. Being able to see one tenant does not entitle you to the
+      // mall-wide log.
+      const [member, admin] = await Promise.all([
+        rtdb.ref(`companyMembers/${company}/${decoded.uid}`).once('value'),
+        rtdb.ref(`admins/${decoded.uid}`).once('value'),
+      ]);
+      if (!(member.exists() || admin.val() === true)) {
+        res.status(403).json({ error: 'forbidden' }); return;
+      }
+
+      const lim = limitOf();
+      const before = beforeOf();
+      let cq = getFirestore().collectionGroup('alerts')
+        .where('companies', 'array-contains', company)
+        .orderBy('ts', 'desc');
+      if (Number.isFinite(before)) cq = cq.where('ts', '<', before);
+
+      const csnap = await cq.limit(lim).get();
+      const calerts = csnap.docs.map((d) => ({ id: d.id, ...d.data(), recordedAt: undefined }));
+      res.set('Cache-Control', 'no-store');
+      res.status(200).json({ company, alerts: calerts, hasMore: calerts.length === lim });
+      return;
+    }
+
+    const device = req.query.device;
+    if (typeof device !== 'string' || !device) {
+      res.status(400).json({ error: 'device or company required' }); return;
+    }
+
     const [viewer, operator, admin] = await Promise.all([
       rtdb.ref(`devices/${device}/viewers/${decoded.uid}`).once('value'),
       rtdb.ref(`devices/${device}/operators/${decoded.uid}`).once('value'),
@@ -620,8 +671,8 @@ exports.readAlerts = onRequest(
       res.status(403).json({ error: 'forbidden' }); return;
     }
 
-    const limit = Math.min(500, Math.max(1, Number(req.query.limit) || 200));
-    const before = Number(req.query.before);
+    const limit = limitOf();
+    const before = beforeOf();
 
     let q = getFirestore().collection('devices').doc(device).collection('alerts')
       .orderBy('ts', 'desc');

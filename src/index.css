@@ -2284,3 +2284,32 @@ body {
 }
 .malldisp-check { width: 9px; display: inline-block; }
 .malldisp-unit { color: var(--text-faint); font-weight: 400; }
+
+.mall-recent-head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
+.mall-recent-all {
+  font: inherit;
+  font-size: .74rem;
+  background: none;
+  border: 0;
+  padding: 0;
+  color: var(--accent);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.mall-recent-all:hover { text-decoration: underline; }
+.mall-empty-log { display: flex; gap: 8px; align-items: baseline; }
+
+/* Which tenant an alert came from - the first thing anyone needs on a
+   mall-wide log, and something the per-device view never had to say. */
+.alert-history-device {
+  font: inherit;
+  font-size: .78rem;
+  font-weight: 600;
+  background: none;
+  border: 0;
+  padding: 0;
+  color: var(--accent);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.alert-history-device:hover { text-decoration: underline; }

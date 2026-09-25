@@ -22,7 +22,7 @@ import { formatAgo } from '../lib/time'
  * of ninety shops buries the one that is offline, which is the only tile
  * that matters on the day it happens.
  */
-export function MallOverview({ companyId, companyName, onOpenDevice, onClose, nowMs }) {
+export function MallOverview({ companyId, companyName, onOpenDevice, onClose, nowMs, onOpenLog }) {
   const [sortKey, setSortKey] = useState('attention')
   // Which reading each tenant shows on its dial, chosen by clicking one of
   // the numbers on the tile. Per VIEWER, not per company: two people can
@@ -108,7 +108,14 @@ export function MallOverview({ companyId, companyName, onOpenDevice, onClose, no
           tenant, so the whole mall's feed costs no extra read. */}
       {recent.length > 0 && (
         <div className="mall-recent">
-          <h3>Recent alerts</h3>
+          <div className="mall-recent-head">
+            <h3>Recent alerts</h3>
+            {/* The strip is each tenant's LATEST event only. The full log
+                is a different thing and says so. */}
+            <button type="button" className="mall-recent-all" onClick={onOpenLog}>
+              View all alerts →
+            </button>
+          </div>
           <ul>
             {recent.map((t) => (
               <li key={t.id} className={`level-${t.lastAlert.level}`}>
@@ -121,6 +128,15 @@ export function MallOverview({ companyId, companyName, onOpenDevice, onClose, no
             ))}
           </ul>
         </div>
+      )}
+
+      {/* Reachable even on a quiet site, where no tenant has a lastAlert
+          yet and the strip above does not render at all. */}
+      {recent.length === 0 && (
+        <p className="mall-empty mall-empty-log">
+          No recent alerts. <button type="button" className="mall-recent-all"
+            onClick={onOpenLog}>View all alerts →</button>
+        </p>
       )}
 
       {loading && rows.length === 0 && <p className="mall-empty">Loading…</p>}

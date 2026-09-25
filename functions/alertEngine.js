@@ -38,11 +38,19 @@ const DEFAULT_OFFLINE_AFTER_MS = 60000;
 // which makes it the opposite of optional.
 //
 // The client tests each live sample against a trailing buffer of live
-// samples. The server cannot - it sees minute rollups. So it tests the
-// minute's EXTREME (max for a high spike, min for a low one) against a
-// trailing buffer of minute AVERAGES. A two-second excursion still registers,
-// because max carries it; what differs is the baseline's resolution, which is
-// per-minute rather than per-sample.
+// samples. The server cannot - it sees minute rollups - so it tests the
+// minute's EXTREME against a baseline of PAST EXTREMES OF THE SAME KIND:
+// this minute's max against previous maxima, its min against previous
+// minima.
+//
+// Comparing the max against a baseline of AVERAGES, which is what this did
+// first, is not a stricter test - it is a broken one. A minute's maximum
+// sits above the mean of past averages by construction, on any tag with
+// variation within the minute, so the z-score measured that gap rather than
+// anything unusual and the test fired almost every minute on almost every
+// tag. The log filled with spikes for every device on every sweep, which is
+// worse than having no spike detection at all: it buries the alerts that
+// matter under ones that do not.
 const SPIKE_MIN_SAMPLES = 8;
 const SPIKE_Z_THRESHOLD = 4;
 const SPIKE_MIN_DELTA_FRACTION = 0.02;
@@ -128,7 +136,15 @@ function evaluate({
     // second and not the first.
     for (const [tagKey, rollup] of Object.entries(w.byTag || {})) {
       if (!rollup || !isNum(rollup.avg)) continue;
-      const buf = buffers[tagKey] || [];
+      // Two buffers, and they matter: see the note on isSpike. An array here
+      // is the OLD single-buffer state from before that fix - discarded
+      // rather than migrated, because its contents are averages and reusing
+      // them as a max baseline would reproduce the very bias being removed.
+      // The cost is one quiet window per tag while the new buffers fill.
+      const prevBuf = buffers[tagKey];
+      const buf = (prevBuf && !Array.isArray(prevBuf) && prevBuf.hi && prevBuf.lo)
+        ? prevBuf
+        : { hi: [], lo: [] };
 
       // Suppress the spike when this same minute also crosses a configured
       // threshold: it is one excursion, and reporting it as both a spike and an
@@ -140,13 +156,22 @@ function evaluate({
       // on the very transition that matters most - which is exactly what
       // the first version of this did.
       const cls = classify(rollup, rules[tagKey]);
+      const hi = isNum(rollup.max) ? rollup.max : rollup.avg;
+      const lo = isNum(rollup.min) ? rollup.min : rollup.avg;
+
       if (cls !== 'high' && cls !== 'low') {
-        const hi = isNum(rollup.max) ? rollup.max : rollup.avg;
-        const lo = isNum(rollup.min) ? rollup.min : rollup.avg;
-        const mean = buf.length ? buf.reduce((a, b) => a + b, 0) / buf.length : 0;
-        // Whichever extreme is further from the established baseline.
-        const extreme = Math.abs(hi - mean) >= Math.abs(lo - mean) ? hi : lo;
-        if (isSpike(buf, extreme)) {
+        // This minute's HIGH against past highs, and its LOW against past
+        // lows. Comparing a max against a baseline of averages is what the
+        // first version did, and it fired on nearly every minute of every
+        // tag: a minute's maximum is systematically above the mean of past
+        // averages, so the test was measuring that bias rather than
+        // anything unusual. The alert log filled with "jumped well outside
+        // its recent range" for every device on every sweep, which is worse
+        // than no spike detection - it buries the alerts that matter.
+        const spikeHigh = isSpike(buf.hi, hi);
+        const spikeLow = isSpike(buf.lo, lo);
+        if (spikeHigh || spikeLow) {
+          const value = spikeHigh ? hi : lo;
           events.push({
             ts: w.minute,
             device,
@@ -154,13 +179,16 @@ function evaluate({
             level: 'warning',
             tagKey,
             tagName: name(tagKey),
-            value: extreme,
+            value,
             message: `${name(tagKey)} jumped well outside its recent range`,
           });
         }
       }
 
-      buffers[tagKey] = [...buf, rollup.avg].slice(-SPIKE_BUFFER_LEN);
+      buffers[tagKey] = {
+        hi: [...buf.hi, hi].slice(-SPIKE_BUFFER_LEN),
+        lo: [...buf.lo, lo].slice(-SPIKE_BUFFER_LEN),
+      };
     }
 
     for (const [tagKey, rule] of Object.entries(rules)) {
