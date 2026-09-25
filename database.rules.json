@@ -258,6 +258,51 @@
       }
     },
 
+    // Billing settings and tenant contacts for one company:
+    //   companyBilling/{companyId}                 rate, VAT, fixed charge, the
+    //                                              company's own email, footer
+    //   companyBilling/{companyId}/tenants/{dev}   billingName, emails
+    //
+    // The bills themselves are NOT here - they are records, kept in Firestore
+    // and written only by the billing functions. This is configuration.
+    //
+    // READ: members of THAT company. Tenant emails are personal data; they
+    // are visible to the landlord who bills them and to nobody else - not to
+    // other tenants, whose own companies hold only their own device.
+    //
+    // WRITE: an OPERATOR of that company, or a super admin. Changing a rate
+    // changes what every tenant is charged; "viewer" is for looking.
+    //
+    // Every field is validated and anything unexpected is refused, so a
+    // stray client write cannot plant data the billing function would then
+    // read as configuration.
+    "companyBilling": {
+      "$companyId": {
+        ".read": "auth != null && auth.token.firebase.sign_in_provider !== 'anonymous' && (root.child('companyMembers/'+$companyId+'/'+auth.uid).exists() || root.child('admins/'+auth.uid).val() === true)",
+        ".write": "auth != null && auth.token.firebase.sign_in_provider !== 'anonymous' && (root.child('companyMembers/'+$companyId+'/'+auth.uid).val() === 'operator' || root.child('admins/'+auth.uid).val() === true)",
+
+        "ratePerKwh":  { ".validate": "newData.isNumber() && newData.val() > 0 && newData.val() < 1000" },
+        "vatPct":      { ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() <= 100" },
+        "fixedCharge": { ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() < 1000000" },
+        "replyTo":     { ".validate": "newData.isString() && newData.val().length <= 200" },
+        "senderName":  { ".validate": "newData.isString() && newData.val().length <= 80" },
+        "footer":      { ".validate": "newData.isString() && newData.val().length <= 1000" },
+
+        "tenants": {
+          "$deviceId": {
+            // Only a device this company actually holds. Otherwise a mall
+            // could attach contact details to someone else's tenant.
+            ".validate": "root.child('companies/'+$companyId+'/devices/'+$deviceId).val() === true",
+            "billingName": { ".validate": "newData.isString() && newData.val().length <= 120" },
+            "emails":      { ".validate": "newData.isString() && newData.val().length <= 600" },
+            "$other": { ".validate": false }
+          }
+        },
+
+        "$other": { ".validate": false }
+      }
+    },
+
     // Which of a tenant's readings appear on the mall wall:
     // mallDisplay/{deviceId}/{tagKey} = true.
     //

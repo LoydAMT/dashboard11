@@ -12,8 +12,14 @@
 // viewers/operators list that decides who may see a device. The check
 // happens server-side against the one real list.
 import { auth } from '../firebase'
+import { functionUrl } from './functionUrl'
 
-export const alertsConfigured = () => Boolean(import.meta.env.VITE_ALERTS_API_URL)
+// The explicit variable wins where it is set; otherwise the address is
+// derived from the project id, which every build already has. See
+// functionUrl.js - this variable was missing from both local env files.
+const alertsBase = () => import.meta.env.VITE_ALERTS_API_URL || functionUrl('readAlerts')
+
+export const alertsConfigured = () => Boolean(alertsBase())
 
 /**
  * One page of one device's alerts, newest first.
@@ -55,7 +61,7 @@ export function fetchCompanyAlerts(companyId, opts = {}) {
  */
 async function fetchAlertPage(scope, opts = {}) {
   const empty = { alerts: [], hasMore: false, cursor: null, partial: false, searchedTo: null }
-  const base = import.meta.env.VITE_ALERTS_API_URL
+  const base = alertsBase()
   if (!base) return empty
   const key = Object.keys(scope)[0]
   if (!scope[key]) return empty

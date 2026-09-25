@@ -23,7 +23,7 @@ import { BackButton } from './BackButton'
  * of ninety shops buries the one that is offline, which is the only tile
  * that matters on the day it happens.
  */
-export function MallOverview({ companyId, companyName, onOpenDevice, onClose, nowMs, onOpenLog }) {
+export function MallOverview({ companyId, companyName, onOpenDevice, onClose, nowMs, onOpenLog, onOpenBilling }) {
   const [sortKey, setSortKey] = useState('attention')
   // Which reading each tenant shows on its dial, chosen by clicking one of
   // the numbers on the tile. Per VIEWER, not per company: two people can
@@ -66,6 +66,12 @@ export function MallOverview({ companyId, companyName, onOpenDevice, onClose, no
             {totals ? `${totals.tenants} tenant${totals.tenants === 1 ? '' : 's'}` : '—'}
             {updatedAt != null && ` · updated ${formatAgo(nowMs - updatedAt)}`}
           </p>
+        </div>
+        {/* The company's two other pages, where a landlord looks for them:
+            beside the name, not buried in a strip lower down. */}
+        <div className="mall-nav">
+          {onOpenLog && <button type="button" className="btn" onClick={onOpenLog}>All alerts</button>}
+          {onOpenBilling && <button type="button" className="btn btn-primary" onClick={onOpenBilling}>Billing</button>}
         </div>
       </div>
 

@@ -1516,3 +1516,458 @@ test('alertQuery: list parameters are bounded and de-duplicated', () => {
   assert.equal(AQ.list(Array.from({ length: 300 }, (_, i) => `d${i}`).join(',')).length, 100);
   assert.deepEqual(AQ.list(undefined), []);
 });
+
+// ---------------------------------------------------------------------------
+//  billing - money, so the properties are pinned down hard
+// ---------------------------------------------------------------------------
+const BL = require('./billing');
+const BE = require('./billEmail');
+
+const PH22 = (d) => BL.readingTimeOf(d);   // 22:00 PHT on a date
+
+test('billing: 22:00 PHT is 14:00 UTC on the same calendar date', () => {
+  assert.equal(new Date(PH22('2026-09-30')).toISOString(), '2026-09-30T14:00:00.000Z');
+});
+
+test('billing: impossible dates are rejected, not rolled into next month', () => {
+  // Date.UTC(2026, 1, 30) quietly becomes 2 March. A bill for "30 February"
+  // must be refused, not issued for a different day.
+  assert.equal(BL.readingTimeOf('2026-02-30'), null);
+  assert.equal(BL.readingTimeOf('2026-13-01'), null);
+  assert.equal(BL.readingTimeOf('garbage'), null);
+});
+
+test('billing: a period runs meter read to meter read', () => {
+  // 1-30 Sep = from the 22:00 reading on 31 Aug to the 22:00 reading on 30 Sep.
+  const p = BL.periodBoundaries('2026-09-01', '2026-09-30', Date.parse('2026-10-05T00:00:00Z'));
+  assert.equal(new Date(p.startTs).toISOString(), '2026-08-31T14:00:00.000Z');
+  assert.equal(new Date(p.endTs).toISOString(), '2026-09-30T14:00:00.000Z');
+  assert.equal(p.days, 30);
+});
+
+test('billing: consecutive periods neither overlap nor leave a gap', () => {
+  const now = Date.parse('2026-12-01T00:00:00Z');
+  const sep = BL.periodBoundaries('2026-09-01', '2026-09-30', now);
+  const oct = BL.periodBoundaries('2026-10-01', '2026-10-31', now);
+  assert.equal(oct.startTs, sep.endTs, 'October must start at the exact reading September ended on');
+});
+
+test('billing: a period whose closing reading has not been taken is refused', () => {
+  // It would otherwise stop at whatever the latest reading was and look complete.
+  const beforeReading = Date.parse('2026-09-30T13:59:00Z');
+  const p = BL.periodBoundaries('2026-09-01', '2026-09-30', beforeReading);
+  assert.ok(p.error && /not happened yet/.test(p.error));
+});
+
+test('billing: a backwards period is refused', () => {
+  assert.ok(BL.periodBoundaries('2026-09-30', '2026-09-01').error);
+});
+
+const daily = (from, values) => values.map((v, i) => ({ ts: PH22(from) + i * BL.DAY_MS, value: v }));
+
+test('billing: consumption is the rise between readings', () => {
+  const readings = daily('2026-08-31', [1000, 1010, 1025, 1040]);   // 31 Aug .. 3 Sep
+  const c = BL.consumption(readings, PH22('2026-08-31'), PH22('2026-09-03'));
+  assert.equal(c.kwh, 40);
+  assert.deepEqual(c.flags, []);
+});
+
+test('billing: a meter reset is flagged, never billed as negative or absurd', () => {
+  // The simulated boxes reset on reboot; a real meter resets when replaced.
+  // End minus start here would be -485.
+  const readings = daily('2026-08-31', [1500, 1510, 1520, 1025, 1035]);
+  const c = BL.consumption(readings, PH22('2026-08-31'), PH22('2026-09-04'));
+  assert.equal(c.kwh, 30, 'only the rises count');
+  assert.equal(c.resets, 1);
+  assert.ok(c.flags.includes('meter-reset'));
+});
+
+test('billing: a late reading after a box was offline at 22:00 is used and flagged', () => {
+  // The box takes the day's reading on its first cycle after coming back.
+  const start = PH22('2026-08-31');
+  const readings = [
+    { ts: start + 5 * BL.HOUR_MS, value: 1000 },      // 03:00, five hours late
+    { ts: PH22('2026-09-01'), value: 1012 },
+  ];
+  const c = BL.consumption(readings, start, PH22('2026-09-01'));
+  assert.equal(c.kwh, 12);
+  assert.ok(c.flags.includes('start-reading-off'), 'an off-boundary reading must say so');
+});
+
+test('billing: no readings at all gives no figure, not zero', () => {
+  // Zero would be a bill for nothing that looks correct.
+  const c = BL.consumption([], PH22('2026-08-31'), PH22('2026-09-30'));
+  assert.equal(c.kwh, null);
+  assert.ok(c.flags.includes('no-readings'));
+});
+
+test('billing: amounts are exact to the centavo', () => {
+  // 0.1 + 0.2 must never reach a bill.
+  const a = BL.amounts({ kwh: 123.456, ratePerKwh: 12.35, vatPct: 12, fixedCharge: 50.10 });
+  assert.equal(a.energy, 1524.68);       // 123.456 x 12.35 = 1524.6816
+  assert.equal(a.fixed, 50.1);
+  assert.equal(a.subtotal, 1574.78);
+  assert.equal(a.vat, 188.97);           // 12% of 1574.78 = 188.9736
+  assert.equal(a.total, 1763.75);
+});
+
+test('billing: emails are split, lowercased, de-duplicated, and bad ones reported', () => {
+  const r = BL.parseEmails('Shop@Toys.ph, shop@toys.ph; owner@toys.ph  not-an-email');
+  assert.deepEqual(r.valid, ['shop@toys.ph', 'owner@toys.ph']);
+  assert.deepEqual(r.invalid, ['not-an-email']);
+});
+
+test('billing: a sender name cannot inject email headers', () => {
+  assert.equal(BL.cleanName('Mall\r\nBcc: victim@x.com'), 'MallBcc: victim@x.com');
+  assert.equal(BL.cleanName('Evil <x@y.com>'), 'Evil x@y.com');
+});
+
+test('billing: no rate means no bills, rather than bills for zero', () => {
+  assert.ok(BL.readSettings({}).error);
+  assert.ok(BL.readSettings({ ratePerKwh: 0 }).error);
+  assert.equal(BL.readSettings({ ratePerKwh: 12.5 }).settings.ratePerKwh, 12.5);
+});
+
+test('billing: a draft carries everything needed to reproduce it', () => {
+  const settings = BL.readSettings({ ratePerKwh: 10, vatPct: 12 }).settings;
+  const period = BL.periodBoundaries('2026-09-01', '2026-09-02', Date.parse('2026-10-01T00:00:00Z'));
+  const b = BL.draftBill({
+    deviceId: 'wecon2-c2', tenantName: 'Toy Shop', emails: 'a@toys.ph',
+    readings: daily('2026-08-31', [100, 110, 125]), period, settings,
+  });
+  assert.equal(b.kwh, 25);
+  assert.equal(b.rate, 10);
+  assert.equal(b.total, 280);            // 250 + 12%
+  assert.equal(b.start.value, 100);
+  assert.equal(b.end.value, 125);
+  assert.equal(b.included, true);
+});
+
+test('billing: a manual adjustment replaces the measured figure but keeps it', () => {
+  const settings = BL.readSettings({ ratePerKwh: 10 }).settings;
+  const period = BL.periodBoundaries('2026-09-01', '2026-09-02', Date.parse('2026-10-01T00:00:00Z'));
+  const b = BL.draftBill({
+    deviceId: 'd', tenantName: 'T', emails: 'a@b.ph',
+    readings: daily('2026-08-31', [1500, 1510, 20]), period, settings,
+    keep: { adjustKwh: 40, adjustNote: 'meter replaced 2 Sep' },
+  });
+  assert.equal(b.kwh, 40);
+  assert.equal(b.measuredKwh, 10, 'the measured figure must survive for the audit trail');
+  assert.equal(b.total, 400);
+});
+
+test('billing: a bill with no kWh or no email cannot be sent', () => {
+  assert.equal(BL.sendBlocker({ included: true, kwh: null, to: ['a@b.ph'] }), 'no kWh figure');
+  assert.equal(BL.sendBlocker({ included: true, kwh: 5, to: [] }), 'no email address');
+  assert.equal(BL.sendBlocker({ included: false, kwh: 5, to: ['a@b.ph'] }), 'left out of this run');
+  assert.equal(BL.sendBlocker({ status: 'sent', included: true, kwh: 5, to: ['a@b.ph'] }), 'already sent');
+  assert.equal(BL.sendBlocker({ included: true, kwh: 5, to: ['a@b.ph'] }), null);
+});
+
+test('billEmail: a tenant name with markup arrives as text', () => {
+  const settings = BL.readSettings({ ratePerKwh: 10 }).settings;
+  const period = BL.periodBoundaries('2026-09-01', '2026-09-02', Date.parse('2026-10-01T00:00:00Z'));
+  const bill = BL.draftBill({
+    deviceId: 'd', tenantName: '<img src=x onerror=alert(1)>', emails: 'a@b.ph',
+    readings: daily('2026-08-31', [1, 2, 3]), period, settings,
+  });
+  const { html } = BE.buildBillEmail({
+    bill, run: { periodFrom: '2026-09-01', periodTo: '2026-09-02' },
+    company: { senderName: 'Mall', footer: '<script>x</script>' },
+  });
+  assert.ok(!html.includes('<img src=x'), 'tenant name was not escaped');
+  assert.ok(!html.includes('<script>x'), 'footer was not escaped');
+});
+
+test('billEmail: the amount due and period are in both html and text', () => {
+  const settings = BL.readSettings({ ratePerKwh: 12.5, vatPct: 12 }).settings;
+  const period = BL.periodBoundaries('2026-09-01', '2026-09-30', Date.parse('2026-10-05T00:00:00Z'));
+  const bill = BL.draftBill({
+    deviceId: 'd', tenantName: 'Toy Shop', emails: 'a@b.ph',
+    readings: [{ ts: period.startTs, value: 1000 }, { ts: period.endTs, value: 1100 }],
+    period, settings,
+  });
+  const run = { periodFrom: '2026-09-01', periodTo: '2026-09-30' };
+  const out = BE.buildBillEmail({ bill, run, company: { senderName: 'Demo Mall', replyTo: 'm@mall.ph' } });
+  // 100 kWh x 12.50 = 1250, + 12% = 1400
+  assert.ok(out.html.includes('1,400.00'), 'amount missing from html');
+  assert.ok(out.text.includes('1,400.00'), 'amount missing from text');
+  assert.ok(out.subject.includes('1 Sep 2026') && out.subject.includes('30 Sep 2026'));
+});
+
+// ---------------------------------------------------------------------------
+//  billingHandlers - against in-memory fakes of RTDB, Firestore and Resend.
+//  The property that matters most: no bill is ever emailed twice.
+// ---------------------------------------------------------------------------
+const BH = require('./billingHandlers');
+
+function fakeRtdb(tree) {
+  const at = (path) => path.split('/').filter(Boolean).reduce((n, k) => (n == null ? undefined : n[k]), tree);
+  const snap = (v) => ({ val: () => (v === undefined ? null : v), exists: () => v !== undefined && v !== null });
+  const ref = (path) => {
+    const q = { lo: null, hi: null };
+    const api = {
+      orderByKey: () => api,
+      startAt: (v) => { q.lo = v; return api; },
+      endAt: (v) => { q.hi = v; return api; },
+      once: async () => {
+        let v = at(path);
+        if (v && typeof v === 'object' && (q.lo || q.hi)) {
+          v = Object.fromEntries(Object.entries(v).filter(([k]) => (!q.lo || k >= q.lo) && (!q.hi || k <= q.hi)));
+        }
+        return snap(v);
+      },
+    };
+    return api;
+  };
+  return { ref };
+}
+
+const TS = { toMillis: () => Date.now() };
+const FV = { serverTimestamp: () => TS };
+
+function fakeFirestore() {
+  const docs = new Map();   // path -> data
+  const docRef = (path) => ({
+    path,
+    id: path.split('/').pop(),
+    get: async () => ({ exists: docs.has(path), data: () => docs.get(path), get: (f) => docs.get(path)?.[f] }),
+    set: async (d, o) => { docs.set(path, o && o.merge ? { ...(docs.get(path) || {}), ...d } : { ...d }); },
+    update: async (d) => { docs.set(path, { ...(docs.get(path) || {}), ...d }); },
+    delete: async () => { docs.delete(path); },
+    collection: (name) => colRef(`${path}/${name}`),
+  });
+  const colRef = (path) => {
+    const list = () => [...docs.keys()]
+      .filter((k) => k.startsWith(`${path}/`) && !k.slice(path.length + 1).includes('/'))
+      .map((k) => ({ id: k.split('/').pop(), data: () => docs.get(k) }));
+    const api = {
+      doc: (id) => docRef(`${path}/${id}`),
+      get: async () => ({ docs: list() }),
+      orderBy: () => api,
+      limit: () => api,
+    };
+    return api;
+  };
+  const fs = {
+    collection: (name) => colRef(name),
+    doc: (p) => docRef(p),
+    batch: () => {
+      const ops = [];
+      return {
+        set: (ref, d, o) => ops.push(() => ref.set(d, o)),
+        delete: (ref) => ops.push(() => ref.delete()),
+        commit: async () => { for (const op of ops) await op(); },
+      };
+    },
+    runTransaction: async (fn) => fn({
+      get: (ref) => ref.get(),
+      update: (ref, d) => ref.update(d),
+    }),
+  };
+  return { fs, docs };
+}
+
+function fakeRes() {
+  const r = { code: 200, body: null, headers: {} };
+  r.set = (k, v) => { r.headers[k] = v; return r; };
+  r.status = (c) => { r.code = c; return r; };
+  r.json = (b) => { r.body = b; return r; };
+  r.send = (b) => { r.body = b; return r; };
+  return r;
+}
+
+const OPERATOR = 'op-uid';
+const VIEWER = 'viewer-uid';
+const auth = () => ({ verifyIdToken: async (t) => ({ uid: t, email: `${t}@x.ph`, firebase: {} }) });
+
+// Two tenants with daily 22:00 readings across 1-3 Sep; the second has no email.
+const START = Date.parse('2026-08-31T14:00:00Z');
+const raw = (base, step) => Object.fromEntries([0, 1, 2, 3].map((i) => [String(START + i * 86400000), base + i * step]));
+
+function world({ secondEmail = '' } = {}) {
+  const rtdb = fakeRtdb({
+    admins: {},
+    companyMembers: { mall: { [OPERATOR]: 'operator', [VIEWER]: 'viewer' } },
+    companies: { mall: { name: 'Demo Mall', devices: { t1: true, t2: true } } },
+    companyBilling: { mall: {
+      ratePerKwh: 10, vatPct: 12, replyTo: 'billing@mall.ph', senderName: 'Demo Mall',
+      tenants: { t1: { billingName: 'Toy Shop', emails: 'toys@shop.ph' }, t2: { billingName: 'Cafe', emails: secondEmail } },
+    } },
+    naming: {},
+    devices: {
+      t1: { tags: { kWh: {} }, history: { kWh: { raw: raw(1000, 10) } } },
+      t2: { tags: { kWh: {} }, history: { kWh: { raw: raw(500, 5) } } },
+    },
+  });
+  const { fs, docs } = fakeFirestore();
+  const deps = { getDatabase: () => rtdb, getFirestore: () => fs, getAuth: auth, FieldValue: FV };
+  const api = BH.createBillingApi(deps);
+  const call = async (uid, body) => {
+    const res = fakeRes();
+    await api({ method: 'POST', headers: { 'x-id-token': uid }, body, query: {} }, res);
+    return res;
+  };
+  return { deps, docs, call };
+}
+
+function fakeResend(behaviour = () => ({ ok: true })) {
+  const calls = [];
+  const fetchImpl = async (url, init) => {
+    const body = JSON.parse(init.body);
+    calls.push({ key: init.headers['Idempotency-Key'], to: body.to, cc: body.cc, from: body.from });
+    const b = behaviour(calls.length);
+    if (b.throw) throw new Error('network down');
+    return b.ok
+      ? { ok: true, status: 200, json: async () => ({ id: `msg_${calls.length}` }) }
+      : { ok: false, status: 422, json: async () => ({ message: b.message || 'invalid' }) };
+  };
+  return { calls, fetchImpl };
+}
+
+async function send(w, uid, resend, extra = {}) {
+  const handler = BH.createBillingSend({
+    ...w.deps, apiKey: () => 'k', fromAddress: 'billing@instrubytemonitoring.com', fetchImpl: resend.fetchImpl,
+  });
+  const res = fakeRes();
+  await handler({ method: 'POST', headers: { 'x-id-token': uid }, body: { action: 'send', company: 'mall', run: RUN, ...extra }, query: {} }, res);
+  return res;
+}
+
+const RUN = '2026-09-01_2026-09-03';
+const PREP = { action: 'prepare', company: 'mall', from: '2026-09-01', to: '2026-09-03' };
+
+test('billingApi: prepare builds one bill per tenant from the raw readings', async () => {
+  const w = world({ secondEmail: 'cafe@shop.ph' });
+  const res = await w.call(OPERATOR, PREP);
+  assert.equal(res.code, 200, JSON.stringify(res.body));
+  const t1 = res.body.bills.find((b) => b.deviceId === 't1');
+  assert.equal(t1.kwh, 30);                 // 1000 -> 1030
+  assert.equal(t1.total, 336);              // 300 + 12%
+  assert.deepEqual(t1.to, ['toys@shop.ph']);
+  assert.equal(res.body.run.summary.included, 2);
+});
+
+test('billingApi: a viewer cannot prepare bills', async () => {
+  const w = world();
+  const res = await w.call(VIEWER, PREP);
+  assert.equal(res.code, 403);
+});
+
+test('billingApi: a company id cannot steer the path', async () => {
+  const w = world();
+  const res = await w.call(OPERATOR, { ...PREP, company: 'mall/../admins' });
+  assert.equal(res.code, 400);
+});
+
+test('billingApi: refreshing a run keeps the decisions already made on it', async () => {
+  const w = world({ secondEmail: 'cafe@shop.ph' });
+  await w.call(OPERATOR, PREP);
+  await w.call(OPERATOR, { action: 'update', company: 'mall', run: RUN, device: 't2', included: false });
+  await w.call(OPERATOR, { action: 'update', company: 'mall', run: RUN, device: 't1', adjustKwh: 42, adjustNote: 'meter swapped' });
+  const again = await w.call(OPERATOR, PREP);
+  const t1 = again.body.bills.find((b) => b.deviceId === 't1');
+  const t2 = again.body.bills.find((b) => b.deviceId === 't2');
+  assert.equal(t2.included, false, 'an exclusion was lost on refresh');
+  assert.equal(t1.kwh, 42, 'an adjustment was lost on refresh');
+  assert.equal(t1.measuredKwh, 30);
+});
+
+test('billingApi: an adjustment must say why', async () => {
+  const w = world();
+  await w.call(OPERATOR, PREP);
+  const res = await w.call(OPERATOR, { action: 'update', company: 'mall', run: RUN, device: 't1', adjustKwh: 42 });
+  assert.equal(res.code, 400);
+});
+
+test('billingSend: each bill is emailed once, and a second Send sends nothing', async () => {
+  const w = world({ secondEmail: 'cafe@shop.ph' });
+  await w.call(OPERATOR, PREP);
+  const resend = fakeResend();
+  const first = await send(w, OPERATOR, resend);
+  assert.equal(resend.calls.length, 2);
+  assert.equal(first.body.summary.sent, 2);
+
+  const second = await send(w, OPERATOR, resend);
+  assert.equal(resend.calls.length, 2, 'a second Send delivered bills again');
+  assert.ok(second.body.results.every((r) => r.skipped === 'already sent'));
+});
+
+test('billingSend: the mall is Reply-To and CC, and the From is ours', async () => {
+  const w = world({ secondEmail: 'cafe@shop.ph' });
+  await w.call(OPERATOR, PREP);
+  const resend = fakeResend();
+  await send(w, OPERATOR, resend);
+  assert.deepEqual(resend.calls[0].cc, ['billing@mall.ph']);
+  assert.equal(resend.calls[0].from, '"Demo Mall" <billing@instrubytemonitoring.com>');
+});
+
+test('billingSend: a bill with no email address is skipped, never sent to nobody', async () => {
+  const w = world({ secondEmail: '' });
+  await w.call(OPERATOR, PREP);
+  const resend = fakeResend();
+  const res = await send(w, OPERATOR, resend);
+  assert.equal(resend.calls.length, 1);
+  assert.equal(res.body.results.find((r) => r.deviceId === 't2').skipped, 'no email address');
+});
+
+test('billingSend: a refused email is retried with a NEW idempotency key', async () => {
+  // Resend refused it, so no email exists; replaying the old key would just
+  // replay the refusal.
+  const w = world();
+  await w.call(OPERATOR, PREP);
+  const failing = fakeResend(() => ({ ok: false, message: 'domain not verified' }));
+  const r1 = await send(w, OPERATOR, failing);
+  assert.equal(r1.body.results[0].error, 'domain not verified');
+  assert.match(failing.calls[0].key, /\/t1\/0$/);
+
+  const ok = fakeResend();
+  await send(w, OPERATOR, ok);
+  assert.match(ok.calls[0].key, /\/t1\/1$/, 'retry reused the key of a refused attempt');
+});
+
+test('billingSend: after a network failure the bill is held, not re-sent at once', async () => {
+  // Whether Resend received it is unknown. Sending again immediately could
+  // double-bill; it is held, and a later retry reuses the SAME key so Resend
+  // deduplicates it if the first one did arrive.
+  const w = world();
+  await w.call(OPERATOR, PREP);
+  const flaky = fakeResend(() => ({ throw: true }));
+  await send(w, OPERATOR, flaky);
+  const bill = w.docs.get(`billing/mall/runs/${RUN}/bills/t1`);
+  assert.equal(bill.status, 'sending');
+  assert.equal(bill.attempts, 0, 'the attempt number must not advance on an unknown outcome');
+
+  const again = fakeResend();
+  const r = await send(w, OPERATOR, again);
+  assert.equal(again.calls.length, 0, 'retried while the outcome was still unknown');
+  assert.equal(r.body.results[0].skipped, 'already being sent');
+});
+
+test('billingSend: a viewer cannot send', async () => {
+  const w = world({ secondEmail: 'cafe@shop.ph' });
+  await w.call(OPERATOR, PREP);
+  const resend = fakeResend();
+  const res = await send(w, VIEWER, resend);
+  assert.equal(res.code, 403);
+  assert.equal(resend.calls.length, 0);
+});
+
+test('billingApi: a sent bill can be neither edited nor discarded', async () => {
+  const w = world({ secondEmail: 'cafe@shop.ph' });
+  await w.call(OPERATOR, PREP);
+  await send(w, OPERATOR, fakeResend());
+  const edit = await w.call(OPERATOR, { action: 'update', company: 'mall', run: RUN, device: 't1', included: false });
+  assert.equal(edit.code, 409);
+  const discard = await w.call(OPERATOR, { action: 'discard', company: 'mall', run: RUN });
+  assert.equal(discard.code, 409);
+});
+
+test('billingApi: refreshing after a send leaves the sent bill exactly as it went out', async () => {
+  const w = world({ secondEmail: 'cafe@shop.ph' });
+  await w.call(OPERATOR, PREP);
+  await send(w, OPERATOR, fakeResend());
+  const before = JSON.stringify(w.docs.get(`billing/mall/runs/${RUN}/bills/t1`));
+  await w.call(OPERATOR, PREP);
+  assert.equal(JSON.stringify(w.docs.get(`billing/mall/runs/${RUN}/bills/t1`)), before);
+});

@@ -19,12 +19,17 @@ const AF = require('./archiveFormat');
 const { listDevices, overviewCompanies, companiesByDevice } = require('./deviceRegistry');
 const { tenantRow, rollUp } = require('./mallOverview');
 const { parseFilters, runFiltered } = require('./alertQuery');
+const { createBillingApi, createBillingSend } = require('./billingHandlers');
 
 if (getApps().length === 0) {
   initializeApp();
 }
 
 const ARCHIVE_RELAY_KEY = defineSecret('ARCHIVE_RELAY_KEY');
+// Resend API key for billing email. Loaded ONLY by billingSend - the one
+// function that can put a bill in a tenant's inbox. Set it with:
+//   firebase functions:secrets:set RESEND_API_KEY
+const RESEND_API_KEY = defineSecret('RESEND_API_KEY');
 
 // Receives minute-rollup packages from the edge device (Wecon RH-W / Lua)
 // and archives them into Firestore at devices/{device}/archive/{tag}_{hour}.
@@ -962,4 +967,33 @@ exports.migrateArchive = onRequest(
 
     res.status(200).json({ ...summary, written, deletedOldDocs: deleted });
   }
+);
+
+// ---------------------------------------------------------------------------
+//  Billing
+//
+//  Two functions on purpose - see billingHandlers.js. billingApi prepares,
+//  edits and previews bills and holds no secrets, so it works before an email
+//  account exists. billingSend is the only function holding the Resend key.
+//
+//  The From address must be on a domain verified in Resend. Until the domain
+//  is verified, BILLING_FROM can be set to onboarding@resend.dev, which Resend
+//  only delivers to the account owner's own address - fine for a test run.
+// ---------------------------------------------------------------------------
+const billingDeps = { getDatabase, getFirestore, getAuth, FieldValue };
+
+exports.billingApi = onRequest(
+  { region: 'asia-southeast1', timeoutSeconds: 120, memory: '512MiB' },
+  createBillingApi(billingDeps),
+);
+
+exports.billingSend = onRequest(
+  // Long timeout: sending is paced to Resend's two-per-second limit, so a
+  // mall of ninety takes about a minute.
+  { region: 'asia-southeast1', timeoutSeconds: 540, secrets: [RESEND_API_KEY] },
+  createBillingSend({
+    ...billingDeps,
+    apiKey: () => RESEND_API_KEY.value(),
+    fromAddress: process.env.BILLING_FROM || 'billing@instrubytemonitoring.com',
+  }),
 );

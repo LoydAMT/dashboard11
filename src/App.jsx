@@ -31,6 +31,7 @@ import { SignIn } from './components/SignIn'
 import { DevicePicker } from './components/DevicePicker'
 import { MallOverview, MallEntry } from './components/MallOverview'
 import { MallAlertHistory } from './components/MallAlertHistory'
+import { Billing } from './components/Billing'
 import { NamingPage } from './components/NamingPage'
 import { ThemeToggle } from './components/ThemeToggle'
 import { AlertToasts } from './components/AlertToasts'
@@ -89,8 +90,10 @@ function Dashboard() {
   // single-device dashboard - the overview is an additional surface, not a
   // replacement, and a tenant with one device never sees it.
   const [mallView, setMallView] = useState(null)
-  // The company-wide alert log, shown in place of the tenant wall.
-  const [mallLog, setMallLog] = useState(false)
+  // Which page of an open company: the tenant wall, the company-wide alert
+  // log, or billing. One value rather than a flag per page, so two can never
+  // be "open" at once.
+  const [mallPage, setMallPage] = useState('wall')
 
   // Auto-select the common case (exactly one device) without ever showing a
   // picker for it. A previously chosen device that has fallen out of the
@@ -385,23 +388,33 @@ function Dashboard() {
       {/* The landlord's page. Rendered INSTEAD of the device dashboard, so
           the ninety per-device subscriptions below are never mounted while
           it is open. */}
-      {mallView && mallLog && (
+      {mallView && mallPage === 'log' && (
         <MallAlertHistory
           companyId={mallView.id}
           companyName={mallView.name}
           nowMs={now}
-          onClose={() => setMallLog(false)}
-          onOpenDevice={(id) => { setChosenDeviceId(id); setMallView(null); setMallLog(false) }}
+          onClose={() => setMallPage('wall')}
+          onOpenDevice={(id) => { setChosenDeviceId(id); setMallView(null) }}
         />
       )}
 
-      {mallView && !mallLog && (
+      {mallView && mallPage === 'billing' && (
+        <Billing
+          companyId={mallView.id}
+          companyName={mallView.name}
+          nowMs={now}
+          onClose={() => setMallPage('wall')}
+        />
+      )}
+
+      {mallView && mallPage === 'wall' && (
         <MallOverview
           companyId={mallView.id}
           companyName={mallView.name}
           nowMs={now}
           onOpenDevice={(id) => { setChosenDeviceId(id); setMallView(null) }}
-          onOpenLog={() => setMallLog(true)}
+          onOpenLog={() => setMallPage('log')}
+          onOpenBilling={() => setMallPage('billing')}
           onClose={() => setMallView(null)}
         />
       )}
@@ -414,7 +427,7 @@ function Dashboard() {
             <MallEntry
               key={id}
               companyId={id}
-              onOpen={(cid, cname) => setMallView({ id: cid, name: cname })}
+              onOpen={(cid, cname) => { setMallView({ id: cid, name: cname }); setMallPage('wall') }}
             />
           ))}
         </div>
