@@ -139,6 +139,9 @@ function TenantTile({ tenant, nowMs, onOpen }) {
   const primary = primaryTag(tenant)
   const meter = meterTag(tenant)
   const offline = tenant.alarm === 'offline'
+  // The unit from the device's own tag metadata. Falling back to the tag key
+  // keeps a box that never published a unit readable rather than blank.
+  const unit = primary?.entry.u || primary?.key || ''
 
   const scale = primary && gaugeScale({
     value: primary.entry.v,
@@ -160,31 +163,34 @@ function TenantTile({ tenant, nowMs, onOpen }) {
     >
       {scale ? (
         <TagGauge
+          compact
           scale={scale}
           alarm={offline ? 'unknown' : tenant.alarm}
           stale={offline}
-          label={`${tenant.name}: ${primary.entry.v} ${primary.key}`}
+          label={`${tenant.name}: ${primary.entry.v} ${unit}`}
         >
-          <span className="card-number">{primary.entry.v.toFixed(2)}</span>
-          <span className="card-unit">{primary.key}</span>
+          <span className="card-number">{fmt(primary.entry.v)}</span>
+          <span className="card-unit">{unit}</span>
         </TagGauge>
       ) : (
         <div className="tenant-nodial">
           {primary
-            ? <><b>{primary.entry.v.toFixed(2)}</b> {primary.key}</>
+            ? <><b>{fmt(primary.entry.v)}</b> {unit}</>
             : <span className="mall-val-none">no reading</span>}
         </div>
       )}
 
-      {/* The threshold in words as well as on the arc. The panel meters this
-          replaces print only the words and leave the dial unmarked, which
-          tells you the number but never how close you are to it. */}
-      {primary && (primary.entry.hi != null || primary.entry.lo != null) && (
-        <div className="tenant-limit">
-          {primary.entry.lo != null && <span className="lim-lo">Low {primary.entry.lo}</span>}
-          {primary.entry.hi != null && <span className="lim-hi">High {primary.entry.hi}</span>}
-        </div>
-      )}
+      {/* One line, always rendered even when empty, so every tile is the
+          same height and the wall reads as a grid instead of a ragged
+          stack. The threshold is spelled out as well as drawn, because the
+          arc says "how close" and the number says "to what". */}
+      <div className="tenant-limit">
+        {primary?.entry.lo != null && <span className="lim-lo">Low {primary.entry.lo}</span>}
+        {primary?.entry.hi != null && <span className="lim-hi">High {primary.entry.hi}</span>}
+        {primary && primary.entry.lo == null && primary.entry.hi == null && (
+          <span className="lim-none">no alerts set</span>
+        )}
+      </div>
 
       <div className="tenant-meter">
         {meter ? <><b>{meter.entry.v.toLocaleString()}</b> kWh</> : <span>&nbsp;</span>}
@@ -198,15 +204,26 @@ function TenantTile({ tenant, nowMs, onOpen }) {
 
       <div className="tenant-name">{tenant.name}</div>
 
-      <div className="tenant-state">
-        {offline
-          ? (tenant.lastSeen ? `offline ${formatAgo(nowMs - tenant.lastSeen)}` : 'never reported')
-          : tenant.alarm === 'high' ? 'above threshold'
-          : tenant.alarm === 'low' ? 'below threshold'
-          : 'ok'}
-      </div>
+      {/* Only when something is wrong. A wall of tiles each captioned "ok"
+          is noise that makes the one saying otherwise harder to spot. */}
+      {tenant.alarm !== 'ok' && (
+        <div className="tenant-state">
+          {offline
+            ? (tenant.lastSeen ? `offline ${formatAgo(nowMs - tenant.lastSeen)}` : 'never reported')
+            : tenant.alarm === 'high' ? 'above threshold' : 'below threshold'}
+        </div>
+      )}
     </button>
   )
+}
+
+/**
+ * Two decimals for a small reading, none for a large one - "231.87 V" wastes
+ * the space a tile does not have, and "0.04 A" needs it.
+ */
+function fmt(v) {
+  const a = Math.abs(v)
+  return a >= 100 ? v.toFixed(0) : a >= 10 ? v.toFixed(1) : v.toFixed(2)
 }
 
 /**

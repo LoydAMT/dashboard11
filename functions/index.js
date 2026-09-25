@@ -496,6 +496,7 @@ exports.alertSweep = onSchedule(
           // prevent.
           rules,
           windows,
+          tagsMeta,
           now,
         });
 

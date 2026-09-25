@@ -68,6 +68,7 @@ function isNum(v) {
  * @param status    devices/{id}/status
  * @param tagState  { tagKey: 'ok'|'high'|'low' } from the alert engine
  * @param offline   the engine's own verdict, when it has one
+ * @param tagsMeta  devices/{id}/tags, for each reading's unit
  * @param rules     alertRules/{device}, so each dial knows its own zones
  * @param windows   the minute rollups the sweep already read, for the
  *                  baseline of a tag with no configured threshold
@@ -79,7 +80,7 @@ function isNum(v) {
  */
 function tenantRow({
   deviceId, name, latest, status, tagState = {}, offline = null,
-  rules = {}, windows = [], now = Date.now(),
+  rules = {}, windows = [], tagsMeta = {}, now = Date.now(),
 }) {
   const lastSeen = isNum(status?.lastSeen) ? status.lastSeen : null;
   // Prefer the engine's verdict; fall back to the clock so a tenant the
@@ -111,6 +112,11 @@ function tenantRow({
   for (const [k, v] of Object.entries(latest || {})) {
     if (!v || !isNum(v.value)) continue;
     const entry = { v: round(v.value) };
+    // The unit, so a tile can read "7.40 A" instead of "7.40 Current".
+    // The sweep already holds tags/ to build alert names, so this costs
+    // nothing beyond the bytes.
+    const unit = tagsMeta[k] && tagsMeta[k].unit;
+    if (typeof unit === 'string' && unit.length > 0) entry.u = unit;
     const rule = rules[k];
     if (rule && isNum(rule.lo)) entry.lo = rule.lo;
     if (rule && isNum(rule.hi)) entry.hi = rule.hi;

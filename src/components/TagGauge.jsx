@@ -43,6 +43,13 @@ const CHAR_W = 6.5 * 0.55
 // arc, which is worse than the dial simply being a little smaller.
 const VB = { x: -11, y: 0, w: 122, h: 82 }
 
+// COMPACT drops the numeric scale and tightens the box. On a wall of tenant
+// tiles those numbers are too small to read and land on top of the reading
+// in the middle - they cost legibility and buy nothing. The zones and the
+// needle still carry the meaning, and the exact value is printed large in
+// the centre, which is what anyone actually reads at that size.
+const VB_COMPACT = { x: 6, y: 2, w: 88, h: 76 }
+
 const rad = (deg) => (deg * Math.PI) / 180
 
 /** Point at `pct` along the sweep, at `radius` from the centre. */
@@ -71,8 +78,9 @@ function arcPath(from, to, radius = R) {
  * @param alarm  'high' | 'low' | 'ok' | 'none' | 'unknown'
  * @param stale  true when the reading is too old to trust
  */
-export function TagGauge({ scale, alarm, stale, children, label }) {
+export function TagGauge({ scale, alarm, stale, children, label, compact = false }) {
   const { pct, loStop, hiStop, offScale, inferred, ticks } = scale
+  const box = compact ? VB_COMPACT : VB
 
   // A stale reading gets the scale but no needle and no fill: the position
   // of an hours-old value is not a fact about now. The card's age line says
@@ -81,6 +89,7 @@ export function TagGauge({ scale, alarm, stale, children, label }) {
 
   const cls = [
     'gauge',
+    compact && 'gauge-compact',
     stale && 'gauge-stale',
     inferred && 'gauge-inferred',
     alarm === 'high' && 'gauge-alarm-high',
@@ -92,7 +101,7 @@ export function TagGauge({ scale, alarm, stale, children, label }) {
 
   return (
     <div className={cls}>
-      <svg viewBox={`${VB.x} ${VB.y} ${VB.w} ${VB.h}`} className="gauge-svg"
+      <svg viewBox={`${box.x} ${box.y} ${box.w} ${box.h}`} className="gauge-svg"
            role="img" aria-label={label}>
         {/* Track, then fill, then zones: the zones are the most important
             thing on the dial, so nothing paints over them. */}
@@ -113,7 +122,7 @@ export function TagGauge({ scale, alarm, stale, children, label }) {
 
         {/* Scale. Labels are anchored by which side of the dial they sit on,
             so they lean away from the arc instead of overlapping it. */}
-        {ticks.map((t) => {
+        {!compact && ticks.map((t) => {
           const a = pointAt(t.pct, R - STROKE / 2 - 1)
           const b = pointAt(t.pct, R - STROKE / 2 - 4)
           const p = labelPos(t.pct, t.label)
@@ -139,7 +148,7 @@ export function TagGauge({ scale, alarm, stale, children, label }) {
             never mistaken for "sitting exactly on the threshold". */}
         {offScale && live && (
           <text className="gauge-offscale"
-                x={offScale === 'high' ? 98 : 2} y={14}
+                x={offScale === 'high' ? box.x + box.w - 3 : box.x + 3} y={14}
                 textAnchor={offScale === 'high' ? 'end' : 'start'}>
             {offScale === 'high' ? '▲' : '▼'}
           </text>

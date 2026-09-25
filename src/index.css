@@ -590,6 +590,13 @@ body {
 .gauge .card-number { font-size: 1.5rem; line-height: 1.05; }
 .gauge .card-unit { font-size: .76rem; }
 
+/* On a tile the dial has no numeric scale to compete with, so the reading
+   can sit lower and larger without landing on anything. */
+.gauge-compact { margin-top: 0; }
+.gauge-compact .gauge-readout { bottom: 1%; }
+.gauge-compact .card-number { font-size: 1.32rem; font-weight: 660; }
+.gauge-compact .card-unit { font-size: .68rem; }
+
 @media (prefers-reduced-motion: reduce) {
   .gauge-fill, .gauge-needle { transition: none; }
 }
@@ -2059,8 +2066,10 @@ body {
    compared against every other, because they all carry the same geometry. */
 .mall-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(168px, 1fr));
-  gap: 10px;
+  grid-template-columns: repeat(auto-fill, minmax(152px, 1fr));
+  gap: 8px;
+  /* Equal row heights so the names line up across a row. */
+  grid-auto-rows: 1fr;
 }
 
 .tenant-tile {
@@ -2073,7 +2082,7 @@ body {
   border: 1px solid var(--border);
   border-radius: var(--radius);
   box-shadow: var(--shadow);
-  padding: 10px 10px 8px;
+  padding: 8px 8px 7px;
   cursor: pointer;
   transition: border-color .12s, transform .12s;
 }
@@ -2095,19 +2104,23 @@ body {
 }
 .tenant-nodial b { color: var(--text); font-size: 1.3rem; }
 
+/* Fixed height, rendered even when empty, so tiles line up. A ragged grid
+   is what makes a wall of these look broken rather than dense. */
 .tenant-limit {
   display: flex;
   justify-content: center;
   gap: 8px;
-  font-size: .68rem;
+  min-height: 13px;
+  font-size: .66rem;
   font-variant-numeric: tabular-nums;
-  margin-top: 2px;
+  margin-top: 1px;
 }
 .lim-hi { color: var(--alarm-hi); }
 .lim-lo { color: var(--alarm-lo); }
+.lim-none { color: var(--text-faint); font-style: italic; }
 
 .tenant-meter {
-  font-size: .76rem;
+  font-size: .74rem;
   color: var(--text-dim);
   font-variant-numeric: tabular-nums;
   margin-top: 4px;
@@ -2115,10 +2128,10 @@ body {
 .tenant-meter b { color: var(--text); font-weight: 640; }
 .tenant-today { color: var(--text-faint); }
 
-/* The name is the anchor, so it reads as a label for the tile rather than
-   as another value. */
+/* Pushed to the bottom so every name sits on the same line across the row,
+   whatever is above it. */
 .tenant-name {
-  margin-top: 6px;
+  margin-top: auto;
   padding: 4px 8px;
   border-radius: 999px;
   background: var(--surface-2);
@@ -2130,6 +2143,7 @@ body {
 .tenant-tile.alarm-low .tenant-name { background: var(--alarm-lo-bg); color: var(--alarm-lo); }
 
 .tenant-state { margin-top: 3px; font-size: .68rem; color: var(--text-faint); }
+.tenant-tile.alarm-ok .tenant-state { display: none; }
 .tenant-tile.alarm-high .tenant-state { color: var(--alarm-hi); }
 .tenant-tile.alarm-low .tenant-state { color: var(--alarm-lo); }
 
