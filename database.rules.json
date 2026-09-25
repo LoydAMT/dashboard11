@@ -258,6 +258,31 @@
       }
     },
 
+    // The landlord's rolled-up view of a multi-device company: every tenant's
+    // live values, alert state and daily meter reading in one node.
+    //
+    // Written only by the Admin SDK (alertSweep owns the live fields,
+    // kwhDailySnapshot owns the kWh ones), so .write is closed everywhere.
+    //
+    // READ IS PER COMPANY, via companyMembers - the same test companies/
+    // itself uses. There is deliberately NO grant at the mallOverview root:
+    // a .read CASCADES in this database, so a root grant would hand every
+    // mall's overview to anyone who could read any of them. Scoping it at
+    // $companyId is what keeps one landlord out of another's estate.
+    //
+    // Note this is a SUMMARY, not a second copy of the telemetry. It carries
+    // current values, not history. A mall member reading it is not thereby
+    // granted the underlying devices/{id} nodes - that access comes from
+    // being a member of a company that lists those devices, projected into
+    // viewers/ the usual way. The two agree because the same companies/ node
+    // drives both.
+    "mallOverview": {
+      "$companyId": {
+        ".read": "auth != null && auth.token.firebase.sign_in_provider !== 'anonymous' && root.child('companyMembers/'+$companyId+'/'+auth.uid).exists()",
+        ".write": false
+      }
+    },
+
     // A display-name override for a device, shared with everyone who can see
     // it - deliberately not device data itself (devices/{deviceId} is
     // untouched by this) and not per-browser: this exists so a rename shows

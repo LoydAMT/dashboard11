@@ -1168,3 +1168,112 @@ test('archiveFormat: day ids cover the whole requested span', () => {
   // a range inside one day is one document, not zero
   assert.equal(AF.dayIdsFor('Current', DAY + 1000, DAY + 2000).length, 1);
 });
+
+// ---------------------------------------------------------------------------
+//  deviceRegistry + mallOverview
+// ---------------------------------------------------------------------------
+const DR = require('./deviceRegistry');
+const MO = require('./mallOverview');
+
+const MALL = {
+  'tenant-a': { devices: { 'ayala-c01': true }, members: { ua: 'viewer' } },
+  'tenant-b': { devices: { 'ayala-c02': true }, members: { ub: 'viewer' } },
+  'ayala-mgmt': { devices: { 'ayala-c01': true, 'ayala-c02': true }, members: { m: 'viewer' } },
+};
+
+test('deviceRegistry: device list comes from companies, not a hardcoded array', () => {
+  assert.deepEqual(DR.listDevices({ companies: MALL }), ['ayala-c01', 'ayala-c02']);
+});
+
+test('deviceRegistry: a device in NO company is still swept via the seed', () => {
+  // The real case: a box commissioned and publishing before anyone set up
+  // its company. Dropping it from the sweeps is the silent gap this closes.
+  const ids = DR.listDevices({ companies: MALL, seed: ['RHW01'] });
+  assert.ok(ids.includes('RHW01'), 'seeded device was dropped');
+  assert.equal(ids.length, 3);
+});
+
+test('deviceRegistry: a device in two companies is listed once', () => {
+  const ids = DR.listDevices({ companies: MALL, seed: ['ayala-c01'] });
+  assert.equal(ids.filter((d) => d === 'ayala-c01').length, 1);
+});
+
+test('deviceRegistry: tenant + mall both own the device (the "do both" model)', () => {
+  const by = DR.companiesByDevice(MALL);
+  assert.deepEqual(by['ayala-c01'], ['ayala-mgmt', 'tenant-a']);
+  assert.deepEqual(by['ayala-c02'], ['ayala-mgmt', 'tenant-b']);
+});
+
+test('deviceRegistry: only multi-device companies get an overview', () => {
+  // No flag to set and none to forget: holding more than one device IS the
+  // landlord case.
+  assert.deepEqual(DR.overviewCompanies(MALL), ['ayala-mgmt']);
+});
+
+test('mallOverview: worst tag state wins, because the question is "needs attention"', () => {
+  const r = MO.tenantRow({
+    deviceId: 'd', name: 'Toy Shop', now: 1000,
+    latest: { Current: { value: 3.4 }, Voltage: { value: 230 } },
+    status: { lastSeen: 1000 },
+    tagState: { Current: 'ok', Voltage: 'high' },
+    offline: false,
+  });
+  assert.equal(r.alarm, 'high');
+  assert.equal(r.name, 'Toy Shop');
+  assert.deepEqual(r.values, { Current: 3.4, Voltage: 230 });
+});
+
+test('mallOverview: offline outranks an alarm', () => {
+  // A tenant that stopped reporting while over its threshold is an OFFLINE
+  // problem. Showing "high" would imply the reading is current.
+  const r = MO.tenantRow({
+    deviceId: 'd', now: 1000, latest: {}, status: { lastSeen: 1000 },
+    tagState: { Current: 'high' }, offline: true,
+  });
+  assert.equal(r.alarm, 'offline');
+  assert.equal(r.online, false);
+});
+
+test('mallOverview: a tenant the engine never evaluated is not assumed fine', () => {
+  const never = MO.tenantRow({
+    deviceId: 'd', now: 10 * 60000, latest: {}, status: {}, offline: null,
+  });
+  assert.equal(never.alarm, 'offline', 'no lastSeen must not read as healthy');
+
+  const fresh = MO.tenantRow({
+    deviceId: 'd', now: 10 * 60000, latest: {},
+    status: { lastSeen: 10 * 60000 - 1000 }, offline: null,
+  });
+  assert.equal(fresh.alarm, 'ok');
+});
+
+test('mallOverview: a missing reading is absent, never written as null', () => {
+  const r = MO.tenantRow({
+    deviceId: 'd', now: 1000, status: { lastSeen: 1000 }, offline: false,
+    latest: { Current: { value: 3.4 }, Voltage: {}, kWh: { value: null } },
+  });
+  assert.deepEqual(Object.keys(r.values), ['Current']);
+});
+
+test('mallOverview: totals count units, and say how many kWh figures they cover', () => {
+  const rows = {
+    a: { alarm: 'ok', online: true, kwh: { deltaKwh: 12.5 } },
+    b: { alarm: 'high', online: true, kwh: { deltaKwh: 4.25 } },
+    c: { alarm: 'offline', online: false },
+    d: { alarm: 'low', online: true, kwh: { deltaKwh: null } },
+  };
+  const t = MO.rollUp(rows);
+  assert.equal(t.tenants, 4);
+  assert.equal(t.inAlarm, 2);
+  assert.equal(t.offline, 1);
+  assert.equal(t.kwhToday, 16.75);
+  // 4 tenants but only 2 known readings - the total must not pretend to
+  // cover the other two.
+  assert.equal(t.kwhFrom, 2);
+});
+
+test('mallOverview: no kWh known at all reports null, not a confident zero', () => {
+  const t = MO.rollUp({ a: { alarm: 'ok', online: true } });
+  assert.equal(t.kwhToday, null);
+  assert.equal(t.kwhFrom, 0);
+});

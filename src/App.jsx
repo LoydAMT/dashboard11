@@ -29,6 +29,7 @@ import { KwhHistory } from './components/KwhHistory'
 import { VfdControl } from './components/VfdControl'
 import { SignIn } from './components/SignIn'
 import { DevicePicker } from './components/DevicePicker'
+import { MallOverview, MallEntry } from './components/MallOverview'
 import { NamingPage } from './components/NamingPage'
 import { ThemeToggle } from './components/ThemeToggle'
 import { AlertToasts } from './components/AlertToasts'
@@ -83,6 +84,10 @@ function Dashboard() {
   // than as an overlay: it is something you sit and read through, not
   // something you glance at over the top of a live chart.
   const [showAlertHistory, setShowAlertHistory] = useState(false)
+  // Which company's landlord view is open, if any. Null is the normal
+  // single-device dashboard - the overview is an additional surface, not a
+  // replacement, and a tenant with one device never sees it.
+  const [mallView, setMallView] = useState(null)
 
   // Auto-select the common case (exactly one device) without ever showing a
   // picker for it. A previously chosen device that has fallen out of the
@@ -363,7 +368,7 @@ function Dashboard() {
         <NotAuthorized email={user?.email} onSignOut={signOutUser} />
       )}
 
-      {resolved && realUser && !deviceAccess.loading && deviceAccess.devices.length > 1 && !deviceId && (
+      {!mallView && resolved && realUser && !deviceAccess.loading && deviceAccess.devices.length > 1 && !deviceId && (
         <DevicePicker
           devices={deviceAccess.devices}
           companyIds={companies.companyIds}
@@ -374,11 +379,38 @@ function Dashboard() {
       {/* Shown INSTEAD of the dashboard body. The live view keeps running
           underneath in the sense that its subscriptions are untouched - this
           is a different thing to look at, not a different mode. */}
-      {ready && showAlertHistory && (
+      {/* The landlord's page. Rendered INSTEAD of the device dashboard, so
+          the ninety per-device subscriptions below are never mounted while
+          it is open. */}
+      {mallView && (
+        <MallOverview
+          companyId={mallView.id}
+          companyName={mallView.name}
+          nowMs={now}
+          onOpenDevice={(id) => { setChosenDeviceId(id); setMallView(null) }}
+          onClose={() => setMallView(null)}
+        />
+      )}
+
+      {/* One entry per company the account belongs to; each renders nothing
+          unless that company holds more than one device. */}
+      {!mallView && resolved && realUser && companies.companyIds.length > 0 && (
+        <div className="mall-entries">
+          {companies.companyIds.map((id) => (
+            <MallEntry
+              key={id}
+              companyId={id}
+              onOpen={(cid, cname) => setMallView({ id: cid, name: cname })}
+            />
+          ))}
+        </div>
+      )}
+
+      {!mallView && ready && showAlertHistory && (
         <AlertHistory deviceId={deviceId} onClose={() => setShowAlertHistory(false)} />
       )}
 
-      {ready && !showAlertHistory && (
+      {!mallView && ready && !showAlertHistory && (
         <>
         <StatusBanner state={state} status={status.data} />
 

@@ -1993,3 +1993,133 @@ body {
   .thresholds-input { width: 100%; }
   .thresholds-actions { text-align: left; }
 }
+
+/* ------------------------------------------------------------------
+   Mall overview — the landlord's page
+
+   A dense list, not a grid of cards. Ninety shops in cards is a scroll;
+   ninety in rows is a scan, and scanning is the actual task: find the one
+   that is offline.
+   ------------------------------------------------------------------ */
+.mall { max-width: 1100px; }
+
+.mall-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+.mall-head h2 { margin: 0; }
+.mall-sub { margin: 2px 0 0; font-size: .8rem; color: var(--text-faint); }
+
+.mall-totals {
+  display: flex;
+  gap: 10px;
+  margin: 14px 0 10px;
+  flex-wrap: wrap;
+}
+.mall-stat {
+  flex: 1 1 130px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 10px 12px;
+}
+.mall-stat-n {
+  display: block;
+  font-size: 1.6rem;
+  font-weight: 660;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.1;
+}
+.mall-stat-l { font-size: .72rem; color: var(--text-faint); }
+.mall-stat.is-bad .mall-stat-n { color: var(--alarm-hi); }
+.mall-stat.is-good .mall-stat-n { color: var(--live); }
+
+.mall-sorts { display: flex; gap: 6px; margin-bottom: 8px; flex-wrap: wrap; }
+.mall-sorts button {
+  font: inherit;
+  font-size: .76rem;
+  padding: 4px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text-dim);
+  cursor: pointer;
+}
+.mall-sorts button.is-active {
+  border-color: var(--accent);
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.mall-list { list-style: none; margin: 0; padding: 0; }
+
+.mall-row {
+  width: 100%;
+  display: grid;
+  grid-template-columns: 10px minmax(110px, 1.4fr) minmax(120px, 1.6fr) 110px 120px;
+  align-items: center;
+  gap: 10px;
+  text-align: left;
+  font: inherit;
+  color: inherit;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 9px 12px;
+  margin-bottom: 5px;
+  cursor: pointer;
+}
+.mall-row:hover { border-color: var(--border-strong); }
+
+.mall-dot { width: 9px; height: 9px; border-radius: 50%; background: var(--live); }
+.dot-high { background: var(--alarm-hi); }
+.dot-low { background: var(--alarm-lo); }
+.dot-offline { background: var(--text-faint); }
+
+.mall-name { font-weight: 560; overflow-wrap: anywhere; }
+.mall-values { display: flex; gap: 10px; flex-wrap: wrap; }
+.mall-val { font-size: .78rem; color: var(--text-dim); font-variant-numeric: tabular-nums; }
+.mall-val b { color: var(--text); font-weight: 620; }
+.mall-val-none { color: var(--text-faint); font-style: italic; }
+.mall-kwh { font-size: .78rem; color: var(--text-dim); font-variant-numeric: tabular-nums; }
+.mall-kwh b { color: var(--text); font-weight: 620; }
+.mall-warn { color: var(--stale); font-style: normal; font-size: .72rem; }
+.mall-state { font-size: .74rem; color: var(--text-faint); text-align: right; }
+
+.mall-row.alarm-offline { background: var(--surface-2); }
+.mall-row.alarm-high .mall-state { color: var(--alarm-hi); }
+.mall-row.alarm-low .mall-state { color: var(--alarm-lo); }
+
+.mall-empty { color: var(--text-faint); font-size: .85rem; }
+
+/* Stacked on a phone: five columns of numbers do not survive 360px, and the
+   mall office checks this on a handset as often as at a desk. */
+@media (max-width: 620px) {
+  .mall-row {
+    grid-template-columns: 10px 1fr;
+    row-gap: 4px;
+  }
+  .mall-values, .mall-kwh, .mall-state { grid-column: 2; text-align: left; }
+}
+
+.mall-entries { display: flex; flex-direction: column; gap: 6px; margin-bottom: 14px; }
+.mall-entry {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  font: inherit;
+  text-align: left;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--accent);
+  border-radius: 10px;
+  padding: 10px 14px;
+  color: inherit;
+  cursor: pointer;
+}
+.mall-entry:hover { border-color: var(--border-strong); border-left-color: var(--accent); }
+.mall-entry-name { font-weight: 580; }
+.mall-entry-count { font-size: .78rem; color: var(--text-faint); }

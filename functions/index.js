@@ -16,6 +16,8 @@ const { computeProjection, toUpdates } = require('./projectCompanyAccess');
 const { evaluate: evaluateAlerts, alertId } = require('./alertEngine');
 const { buildSnapshot, phDateKey } = require('./kwhSnapshot');
 const AF = require('./archiveFormat');
+const { listDevices, overviewCompanies } = require('./deviceRegistry');
+const { tenantRow, rollUp } = require('./mallOverview');
 
 if (getApps().length === 0) {
   initializeApp();
@@ -89,26 +91,48 @@ exports.readArchive = onRequest(
   })
 );
 
-// Listed explicitly rather than discovered. The Admin SDK has no shallow
-// read, so enumerating /devices would mean pulling every device's entire
-// subtree - the single most expensive thing that could be done on a
-// bandwidth-constrained database, to learn three names. Add a device here
-// when one is commissioned.
-const SWEEP_DEVICES = [
+// Devices that must be swept even if no company lists them yet.
+//
+// NOT the sweep list - that now comes from companies/ (see deviceRegistry).
+// These are seeds for one real situation: a box commissioned and publishing
+// before anyone has set up its company. Dropping it from the sweeps during
+// that window means it is silently never archived and never alerted on, on
+// a site nobody is watching precisely because it looks fine.
+//
+// /devices is still never enumerated directly: the Admin SDK has no shallow
+// read, so listing it would mean pulling every device's entire subtree -
+// the single most expensive thing possible on this database, to learn some
+// names. companies/ is small and is already the source of truth for which
+// devices exist.
+const SEED_DEVICES = [
   'RHW01',
-  // wecon2 and wecon3 are now SHARED boxes: the box id itself holds only
-  // status, and each tenant publishes under its own device id. Both are
-  // listed so the box's own health is still swept, and so is every tenant.
-  // The box id is ALSO the first tenant on these two, so it keeps
-  // publishing readings rather than sitting online with nothing to show.
+  // wecon2 and wecon3 are SHARED boxes: the box id itself is also the first
+  // tenant, so it keeps publishing readings rather than sitting online with
+  // nothing to show.
   'wecon2', 'wecon2-c2', 'wecon2-c3',
   'wecon3', 'wecon3-c2', 'wecon3-c3',
 ];
 
-// NOTE: this array is exactly what has to become dynamic before a real
-// mall. Three devices became nine by adding two test tenants; 90 tenants
-// cannot be a literal list, and a device missing from it is silently never
-// archived and never alerted on. See SCOPE_PER_TENANT_LOGINS.txt item W2.
+/**
+ * The device list plus the company map, read once per sweep run.
+ *
+ * companies/ is one small node, so this is a single round trip that
+ * replaces a hand-maintained array. A sweep that cannot read it falls back
+ * to the seeds rather than sweeping nothing: doing less work is survivable,
+ * doing none silently is not.
+ */
+async function loadSweepContext() {
+  let companies = {};
+  try {
+    companies = (await getDatabase().ref('companies').once('value')).val() || {};
+  } catch (err) {
+    console.error('loadSweepContext: companies unreadable, falling back to seeds', err);
+  }
+  return {
+    companies,
+    devices: listDevices({ companies, seed: SEED_DEVICES }),
+  };
+}
 
 const rollupRef = (device, tag) => getDatabase().ref(`devices/${device}/history/${tag}`);
 
@@ -128,8 +152,9 @@ exports.archiveSweep = onSchedule(
     maxInstances: 1,
   },
   async () => {
+    const { devices: sweepDevices } = await loadSweepContext();
     const sweep = createSweep({
-      devices: SWEEP_DEVICES,
+      devices: sweepDevices,
       log: (msg) => console.log(`archiveSweep: ${msg}`),
 
       // The tags/ metadata node, not a listing of history/ - it is small,
@@ -379,14 +404,26 @@ exports.alertSweep = onSchedule(
     // no-op rather than a duplicate.
     const since = now - 15 * 60000;
 
-    for (const device of SWEEP_DEVICES) {
+    const { companies, devices: sweepDevices } = await loadSweepContext();
+    // Filled as each device is evaluated, then projected into the landlord
+    // view below. Built from work this sweep is doing anyway - the whole
+    // reason the overview lives here rather than in a second sweep of its
+    // own.
+    const rows = {};
+
+    for (const device of sweepDevices) {
       try {
-        const [rulesSnap, tagsSnap, statusSnap, stateDoc] = await Promise.all([
-          rtdb.ref(`alertRules/${device}`).once('value'),
-          rtdb.ref(`devices/${device}/tags`).once('value'),
-          rtdb.ref(`devices/${device}/status`).once('value'),
-          fs.collection('alertState').doc(device).get(),
-        ]);
+        const [rulesSnap, tagsSnap, statusSnap, stateDoc, latestSnap, nameSnap] =
+          await Promise.all([
+            rtdb.ref(`alertRules/${device}`).once('value'),
+            rtdb.ref(`devices/${device}/tags`).once('value'),
+            rtdb.ref(`devices/${device}/status`).once('value'),
+            fs.collection('alertState').doc(device).get(),
+            // The only two reads added for the overview. Everything else on
+            // this line was already being fetched to evaluate alerts.
+            rtdb.ref(`devices/${device}/latest`).once('value'),
+            rtdb.ref(`naming/${device}`).once('value'),
+          ]);
 
         const rules = rulesSnap.val() || {};
         const tagsMeta = tagsSnap.val() || {};
@@ -442,6 +479,19 @@ exports.alertSweep = onSchedule(
         // than losing the events entirely.
         await fs.collection('alertState').doc(device).set(state, { merge: true });
 
+        // Landlord view. Uses the state the engine just computed, so the
+        // overview and the alert log can never disagree about whether a
+        // tenant is in alarm.
+        rows[device] = tenantRow({
+          deviceId: device,
+          name: nameSnap.val(),
+          latest: latestSnap.val(),
+          status,
+          tagState: state.tags || {},
+          offline: state.offline,
+          now,
+        });
+
         if (events.length > 0) {
           console.log(`alertSweep: ${device} -> ${events.length} event(s): ` +
             events.map((e) => e.kind).join(', '));
@@ -450,6 +500,52 @@ exports.alertSweep = onSchedule(
         // One device failing must not stop the rest.
         console.error(`alertSweep: ${device} failed`, err);
       }
+    }
+
+    // One node per multi-device company. Written as a multi-path update
+    // touching only the fields this sweep owns, so the daily kWh figures
+    // that kwhDailySnapshot writes into the same node are left alone - a
+    // full set() here would wipe them every two minutes.
+    try {
+      const updates = {};
+      for (const companyId of overviewCompanies(companies)) {
+        const deviceIds = Object.keys(companies[companyId].devices || {});
+        const mine = {};
+        for (const id of deviceIds) {
+          const row = rows[id];
+          if (!row) continue;   // never evaluated this run; leave what is there
+          mine[id] = row;
+          const base = `mallOverview/${companyId}/tenants/${id}`;
+          updates[`${base}/name`] = row.name;
+          updates[`${base}/alarm`] = row.alarm;
+          updates[`${base}/online`] = row.online;
+          updates[`${base}/lastSeen`] = row.lastSeen;
+          // Explicit null, not {}: RTDB stores no empty objects, so this
+          // says "clear the readings" unambiguously. It matters - a tenant
+          // whose latest/ became unreadable must stop showing the numbers
+          // it had an hour ago, not keep them because we skipped the write.
+          updates[`${base}/values`] =
+            Object.keys(row.values).length > 0 ? row.values : null;
+        }
+        const totals = rollUp(mine);
+        // The company's real size, NOT the number evaluated this run. A
+        // device that threw above keeps its previous row in the node, so
+        // counting only evaluated ones would make the headline tenant count
+        // flicker on a transient read failure.
+        updates[`mallOverview/${companyId}/totals/tenants`] = deviceIds.length;
+        updates[`mallOverview/${companyId}/totals/inAlarm`] = totals.inAlarm;
+        updates[`mallOverview/${companyId}/totals/offline`] = totals.offline;
+        updates[`mallOverview/${companyId}/updatedAt`] = now;
+      }
+      if (Object.keys(updates).length > 0) {
+        await rtdb.ref().update(updates);
+        console.log(`alertSweep: overview updated for ` +
+          `${overviewCompanies(companies).length} company(ies)`);
+      }
+    } catch (err) {
+      // The overview is a convenience view. Failing to write it must never
+      // fail the alert sweep, which is the part that matters.
+      console.error('alertSweep: overview projection failed', err);
     }
   }
 );
@@ -546,7 +642,12 @@ exports.kwhDailySnapshot = onSchedule(
     const now = Date.now();
     const dateKey = phDateKey(now);
 
-    for (const device of SWEEP_DEVICES) {
+    const { companies, devices: sweepDevices } = await loadSweepContext();
+    // device -> today's record, kept so the landlord view can be updated
+    // once at the end rather than per device.
+    const daily = {};
+
+    for (const device of sweepDevices) {
       try {
         const [latestSnap, prevSnap] = await Promise.all([
           rtdb.ref(`devices/${device}/latest/kWh`).once('value'),
@@ -571,6 +672,8 @@ exports.kwhDailySnapshot = onSchedule(
           .collection('kwhDaily').doc(dateKey)
           .set({ ...record, recordedAt: FieldValue.serverTimestamp() });
 
+        daily[device] = record;
+
         console.log(`kwhDailySnapshot: ${device} ${dateKey} value=${record.value} ` +
           `stale=${record.staleMs === null ? '?' : Math.round(record.staleMs / 60000) + 'min'} ` +
           `delta=${record.deltaKwh === null ? 'n/a' : record.deltaKwh.toFixed(3)}` +
@@ -578,6 +681,46 @@ exports.kwhDailySnapshot = onSchedule(
       } catch (err) {
         console.error(`kwhDailySnapshot: ${device} failed`, err);
       }
+    }
+
+    // The landlord's billing line. Written HERE and nowhere else: these
+    // figures change once a day, so having the two-minute alert sweep carry
+    // them would mean rewriting a number 720 times a day to say the same
+    // thing. Each writer owns its own fields of the node.
+    try {
+      const updates = {};
+      for (const companyId of overviewCompanies(companies)) {
+        const deviceIds = Object.keys(companies[companyId].devices || {});
+        let total = 0;
+        let known = 0;
+        for (const id of deviceIds) {
+          const rec = daily[id];
+          if (!rec) continue;
+          updates[`mallOverview/${companyId}/tenants/${id}/kwh`] = {
+            date: dateKey,
+            value: rec.value,
+            deltaKwh: rec.deltaKwh,
+            resetSuspected: Boolean(rec.resetSuspected),
+            // Carried through so the mall can see WHICH tenants' figures are
+            // trustworthy. A stale reading billed as a day's consumption is
+            // the failure this whole daily-snapshot path exists to prevent.
+            staleMs: rec.staleMs,
+          };
+          if (typeof rec.deltaKwh === 'number' && Number.isFinite(rec.deltaKwh)) {
+            total += rec.deltaKwh;
+            known += 1;
+          }
+        }
+        updates[`mallOverview/${companyId}/totals/kwhDate`] = dateKey;
+        updates[`mallOverview/${companyId}/totals/kwhToday`] =
+          known > 0 ? Number(total.toFixed(3)) : null;
+        // How many tenants that total actually covers. A mall total that
+        // silently spans 40 of 90 units is misleading unless it says so.
+        updates[`mallOverview/${companyId}/totals/kwhFrom`] = known;
+      }
+      if (Object.keys(updates).length > 0) await rtdb.ref().update(updates);
+    } catch (err) {
+      console.error('kwhDailySnapshot: overview projection failed', err);
     }
   }
 );
