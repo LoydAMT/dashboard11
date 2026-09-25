@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useRtdbValue } from '../hooks/useRtdbValue'
-import { useMallOverview, rankTenants, primaryTag, secondaryTags, meterTag, recentAlerts } from '../hooks/useMallOverview'
+import { useMallOverview, rankTenants, visibleTags, recentAlerts } from '../hooks/useMallOverview'
 import { useCompany } from '../hooks/useCompanies'
 import { gaugeScale } from '../lib/gauge'
 import { TagGauge } from './TagGauge'
@@ -24,6 +24,18 @@ import { formatAgo } from '../lib/time'
  */
 export function MallOverview({ companyId, companyName, onOpenDevice, onClose, nowMs }) {
   const [sortKey, setSortKey] = useState('attention')
+  // Which reading each tenant shows on its dial, chosen by clicking one of
+  // the numbers on the tile. Per VIEWER, not per company: two people can
+  // reasonably want to watch different things on the same wall, and this is
+  // a preference rather than a fact about the site.
+  const [picks, setPicks] = useState(() => loadPicks(companyId))
+  const pick = (deviceId, tagKey) => {
+    setPicks((prev) => {
+      const next = { ...prev, [deviceId]: tagKey }
+      savePicks(companyId, next)
+      return next
+    })
+  }
   const { loading, error, tenants, totals, updatedAt } = useMallOverview(companyId)
   // One read for the whole estate's display preferences, set on the admin
   // page. Per-device reads would be the fan-out this page exists to avoid.
@@ -130,6 +142,8 @@ export function MallOverview({ companyId, companyName, onOpenDevice, onClose, no
             onOpen={onOpenDevice}
             live={i < LIVE_TILE_LIMIT}
             chosen={display.data?.[t.id] || null}
+            picked={picks[t.id]}
+            onPick={pick}
           />
         ))}
       </div>
@@ -146,7 +160,7 @@ export function MallOverview({ companyId, companyName, onOpenDevice, onClose, no
  * ninety: every tile means the same thing, so "needle in the colour" reads
  * correctly without stopping to check any tile's numbers.
  */
-function TenantTile({ tenant, nowMs, onOpen, live, chosen }) {
+function TenantTile({ tenant, nowMs, onOpen, live, chosen, picked, onPick }) {
   // LIVE OVERLAY. The projection refreshes every two minutes, which is fine
   // for "which unit needs attention" and visibly wrong for a wall of
   // needles - they sat still while the single-device dashboard moved every
@@ -161,12 +175,14 @@ function TenantTile({ tenant, nowMs, onOpen, live, chosen }) {
   const liveLatest = useRtdbValue(live ? `devices/${tenant.id}/latest` : null, live)
   const merged = mergeLive(tenant, liveLatest.data)
 
-  const primary = primaryTag(merged, chosen)
-  const extras = secondaryTags(merged, chosen, primary?.key)
-  const meter = meterTag(merged)
+  const shown = visibleTags(merged, chosen)
+  // The viewer's own pick wins over the configured default, and falls back
+  // to it the moment that tag stops reporting - a tile must not go blank
+  // because someone once clicked a reading the box no longer sends.
+  const selectedKey = shown.some((t) => t.key === picked) ? picked : shown[0]?.key
+  const primary = shown.find((t) => t.key === selectedKey) || null
+  const others = shown.filter((t) => t.key !== selectedKey)
   const offline = tenant.alarm === 'offline'
-  // The unit from the device's own tag metadata. Falling back to the tag key
-  // keeps a box that never published a unit readable rather than blank.
   const unit = primary?.entry.u || primary?.key || ''
 
   const scale = primary && gaugeScale({
@@ -182,66 +198,86 @@ function TenantTile({ tenant, nowMs, onOpen, live, chosen }) {
   })
 
   return (
-    <button
-      type="button"
-      className={`tenant-tile alarm-${tenant.alarm}`}
-      onClick={() => onOpen?.(tenant.id)}
-      title={`Open ${tenant.name}`}
-    >
-      {scale ? (
-        <TagGauge
-          compact
-          scale={scale}
-          alarm={offline ? 'unknown' : tenant.alarm}
-          stale={offline}
-          label={`${tenant.name}: ${primary.entry.v} ${unit}`}
-        >
-          <span className="card-number">{fmt(primary.entry.v)}</span>
-          <span className="card-unit">{unit}</span>
-        </TagGauge>
-      ) : (
-        <div className="tenant-nodial">
-          {primary
-            ? <><b>{fmt(primary.entry.v)}</b> {unit}</>
-            : <span className="mall-val-none">no reading</span>}
+    // NOT a button. The readings inside are buttons now, and a button inside
+    // a button is invalid HTML that browsers resolve by dropping one of
+    // them - usually the inner one, which is the one that matters here.
+    <div className={`tenant-tile alarm-${tenant.alarm}`}>
+      <button
+        type="button"
+        className="tenant-open"
+        onClick={() => onOpen?.(tenant.id)}
+        title={`Open ${tenant.name}`}
+      >
+        {scale ? (
+          <TagGauge
+            compact
+            scale={scale}
+            alarm={offline ? 'unknown' : tenant.alarm}
+            stale={offline}
+            label={`${tenant.name}: ${primary.entry.v} ${unit}`}
+          >
+            <span className="card-number">{fmt(primary.entry.v)}</span>
+            <span className="card-unit">{unit}</span>
+          </TagGauge>
+        ) : (
+          // An accumulator has no range to sit inside, so it gets no arc -
+          // a dial of a number that only ever rises would read full for
+          // ever. Promoting kWh to the dial is still allowed; it simply
+          // shows as a large number.
+          <div className="tenant-nodial">
+            {primary
+              ? <><b>{fmt(primary.entry.v)}</b> <span className="tenant-nodial-u">{unit}</span></>
+              : <span className="mall-val-none">no reading</span>}
+          </div>
+        )}
+
+        {/* Always rendered, even when empty, so every tile is the same
+            height and the wall reads as a grid rather than a ragged stack. */}
+        <span className="tenant-limit">
+          {primary?.entry.lo != null && <span className="lim-lo">Low {primary.entry.lo}</span>}
+          {primary?.entry.hi != null && <span className="lim-hi">High {primary.entry.hi}</span>}
+          {primary && primary.entry.lo == null && primary.entry.hi == null && (
+            <span className="lim-none">no alerts set</span>
+          )}
+        </span>
+      </button>
+
+      {/* Every other reading, each one a button that promotes it to the
+          dial. One dial per tile, because three arcs at this size is
+          unreadable - but which one is the viewer's choice, not a guess. */}
+      <div className="tenant-readings">
+        {others.map((t) => (
+          <button
+            key={t.key}
+            type="button"
+            className="tenant-reading"
+            onClick={() => onPick(tenant.id, t.key)}
+            title={`Show ${t.key} on the dial`}
+          >
+            <b>{fmt(t.entry.v)}</b> {t.entry.u || t.key}
+          </button>
+        ))}
+      </div>
+
+      {/* The day's consumption, not the meter total - a different number
+          from the kWh reading above, and the one a landlord bills on. */}
+      {tenant.kwh?.deltaKwh != null && (
+        <div className="tenant-meter">
+          <b>{tenant.kwh.deltaKwh.toFixed(1)}</b> kWh today
+          {/* A reset makes the day's delta meaningless, so it is flagged
+              rather than quietly billed. */}
+          {tenant.kwh.resetSuspected && <em className="mall-warn"> meter reset</em>}
         </div>
       )}
 
-      {/* One line, always rendered even when empty, so every tile is the
-          same height and the wall reads as a grid instead of a ragged
-          stack. The threshold is spelled out as well as drawn, because the
-          arc says "how close" and the number says "to what". */}
-      <div className="tenant-limit">
-        {primary?.entry.lo != null && <span className="lim-lo">Low {primary.entry.lo}</span>}
-        {primary?.entry.hi != null && <span className="lim-hi">High {primary.entry.hi}</span>}
-        {primary && primary.entry.lo == null && primary.entry.hi == null && (
-          <span className="lim-none">no alerts set</span>
-        )}
-      </div>
-
-      {/* Other chosen readings, as numbers. Only the first choice gets an
-          arc - three dials on one tile is unreadable at this size. */}
-      {extras.length > 0 && (
-        <div className="tenant-extras">
-          {extras.map((e) => (
-            <span key={e.key} className="tenant-extra">
-              <b>{fmt(e.entry.v)}</b> {e.entry.u || e.key}
-            </span>
-          ))}
-        </div>
-      )}
-
-      <div className="tenant-meter">
-        {meter ? <><b>{meter.entry.v.toLocaleString()}</b> kWh</> : <span>&nbsp;</span>}
-        {tenant.kwh?.deltaKwh != null && (
-          <span className="tenant-today"> · {tenant.kwh.deltaKwh.toFixed(1)} today</span>
-        )}
-        {/* A reset makes the day's delta meaningless, so it is flagged
-            rather than quietly billed. */}
-        {tenant.kwh?.resetSuspected && <em className="mall-warn"> meter reset</em>}
-      </div>
-
-      <div className="tenant-name">{tenant.name}</div>
+      <button
+        type="button"
+        className="tenant-name"
+        onClick={() => onOpen?.(tenant.id)}
+        title={`Open ${tenant.name}`}
+      >
+        {tenant.name}
+      </button>
 
       {/* Only when something is wrong. A wall of tiles each captioned "ok"
           is noise that makes the one saying otherwise harder to spot. */}
@@ -252,8 +288,38 @@ function TenantTile({ tenant, nowMs, onOpen, live, chosen }) {
             : tenant.alarm === 'high' ? 'above threshold' : 'below threshold'}
         </div>
       )}
-    </button>
+    </div>
   )
+}
+
+/**
+ * Dial choices, remembered per browser.
+ *
+ * localStorage, not the database: this is one viewer's preference about how
+ * to look at the wall, it never needs to reach anyone else, and writing it
+ * server-side would put a database round trip behind a click that should be
+ * instant. Every access is guarded because a private window, blocked site
+ * data or a thumbnail capture can make these throw rather than return
+ * empty, and a tile must still render when they do.
+ */
+const PICKS_KEY = (companyId) => `mallPicks:${companyId}`
+
+function loadPicks(companyId) {
+  try {
+    const raw = localStorage.getItem(PICKS_KEY(companyId))
+    const parsed = raw ? JSON.parse(raw) : null
+    return parsed && typeof parsed === 'object' ? parsed : {}
+  } catch {
+    return {}
+  }
+}
+
+function savePicks(companyId, picks) {
+  try {
+    localStorage.setItem(PICKS_KEY(companyId), JSON.stringify(picks))
+  } catch {
+    // A pick that cannot be remembered still works for this session.
+  }
 }
 
 /**

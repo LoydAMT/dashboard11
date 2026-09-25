@@ -58,8 +58,8 @@ export function useMallOverview(companyId, enabled = true) {
 export function rankTenants(tenants, sortKey = 'attention') {
   const rank = { offline: 0, high: 1, low: 1, ok: 2 }
   const load = (t) => {
-    const p = primaryTag(t)
-    return p ? p.entry.v : -1
+    const first = visibleTags(t)[0]
+    return first ? first.entry.v : -1
   }
   const copy = [...tenants]
   if (sortKey === 'kwh') {
@@ -75,48 +75,41 @@ export function rankTenants(tenants, sortKey = 'attention') {
 }
 
 /**
- * The one tag a tenant's dial should show.
+ * Every reading this tenant should show on its tile, in display order.
  *
- * Current first, then power. NEVER the kWh accumulator: it only rises, so a
- * dial of it would read "full" forever and mean nothing. kWh is the billing
- * figure and gets its own line under the dial, which is where the reference
- * panel meters put it too.
+ * The admin page's choice (mallDisplay) decides WHICH appear and which is
+ * first; with nothing configured every reading is shown. The viewer then
+ * picks which of them sits on the dial, so the configured order is a
+ * default rather than a cage.
+ *
+ * The accumulator is included deliberately. A dial of it is meaningless -
+ * it only rises - but someone wanting the meter total as the tile's headline
+ * number is a reasonable thing to want, and the tile renders it without an
+ * arc rather than refusing.
  */
-export function primaryTag(tenant, chosen = null) {
+export function visibleTags(tenant, chosen = null) {
   const values = tenant?.values || {}
-  // An explicit choice from the admin page wins. The automatic guess below
-  // is right often enough to be a sensible default and wrong often enough
-  // to need overriding - a cold store is watched on temperature, a pump on
-  // pressure, and neither is in the preferred list.
-  if (chosen) {
-    for (const key of Object.keys(chosen)) {
-      if (chosen[key] && values[key] && typeof values[key].v === 'number') {
-        return { key, entry: values[key] }
-      }
-    }
-  }
-  const preferred = ['Current', 'Power', 'kW', 'Voltage']
-  for (const key of preferred) {
-    if (values[key] && typeof values[key].v === 'number') {
-      return { key, entry: values[key] }
-    }
-  }
-  for (const [key, entry] of Object.entries(values)) {
-    if (/kwh/i.test(key)) continue
-    if (entry && typeof entry.v === 'number') return { key, entry }
-  }
-  return null
-}
+  const has = (k) => values[k] && typeof values[k].v === 'number'
 
-/** The accumulator, shown as a number rather than a dial. */
-export function meterTag(tenant) {
-  const values = tenant?.values || {}
-  for (const [key, entry] of Object.entries(values)) {
-    if (/kwh/i.test(key) && entry && typeof entry.v === 'number') {
-      return { key, entry }
-    }
-  }
-  return null
+  const picked = chosen
+    ? Object.keys(chosen).filter((k) => chosen[k] && has(k))
+    : []
+  if (picked.length > 0) return picked.map((key) => ({ key, entry: values[key] }))
+
+  // Nothing configured: show everything, with the readings a landlord most
+  // often wants first so the default dial is usually the right one.
+  const preferred = ['Current', 'Power', 'kW', 'Voltage']
+  const keys = Object.keys(values).filter(has)
+  keys.sort((a, b) => {
+    const ia = preferred.indexOf(a)
+    const ib = preferred.indexOf(b)
+    if (ia !== ib) return (ia < 0 ? 99 : ia) - (ib < 0 ? 99 : ib)
+    // Accumulators last - they are a total, not a live reading.
+    const ka = /kwh/i.test(a) ? 1 : 0
+    const kb = /kwh/i.test(b) ? 1 : 0
+    return ka !== kb ? ka - kb : a.localeCompare(b)
+  })
+  return keys.map((key) => ({ key, entry: values[key] }))
 }
 
 /**
@@ -133,20 +126,4 @@ export function recentAlerts(tenants, limit = 6) {
     .filter((t) => t.lastAlert && typeof t.lastAlert.ts === 'number')
     .sort((a, b) => b.lastAlert.ts - a.lastAlert.ts)
     .slice(0, limit)
-}
-
-/**
- * The other chosen readings, shown as plain numbers under the dial.
- *
- * A tile with three dials is unreadable at the size a wall of ninety
- * demands, so only the first choice gets an arc. Excludes whichever tag is
- * already the dial, and the accumulator, which has its own line.
- */
-export function secondaryTags(tenant, chosen, primaryKey) {
-  if (!chosen) return []
-  const values = tenant?.values || {}
-  return Object.keys(chosen)
-    .filter((k) => chosen[k] && k !== primaryKey && !/kwh/i.test(k))
-    .filter((k) => values[k] && typeof values[k].v === 'number')
-    .map((k) => ({ key: k, entry: values[k] }))
 }

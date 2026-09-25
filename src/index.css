@@ -2072,21 +2072,56 @@ body {
   grid-auto-rows: 1fr;
 }
 
+/* No longer a button: the readings inside are buttons, and nesting them
+   is invalid HTML. The dial and the name open the tenant; each reading
+   promotes itself to the dial. */
 .tenant-tile {
   display: flex;
   flex-direction: column;
-  font: inherit;
-  color: inherit;
   text-align: center;
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius);
   box-shadow: var(--shadow);
   padding: 8px 8px 7px;
-  cursor: pointer;
-  transition: border-color .12s, transform .12s;
+  transition: border-color .12s;
 }
-.tenant-tile:hover { border-color: var(--border-strong); transform: translateY(-1px); }
+.tenant-tile:hover { border-color: var(--border-strong); }
+
+.tenant-open {
+  display: block;
+  width: 100%;
+  font: inherit;
+  color: inherit;
+  background: none;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+}
+
+/* Each one swaps itself onto the dial. Styled as a control rather than as
+   text, because a number that does something has to look like it does. */
+.tenant-readings {
+  display: flex;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 4px;
+}
+.tenant-reading {
+  font: inherit;
+  font-size: .72rem;
+  padding: 2px 7px;
+  border-radius: 999px;
+  border: 1px solid transparent;
+  background: var(--surface-2);
+  color: var(--text-dim);
+  cursor: pointer;
+  font-variant-numeric: tabular-nums;
+}
+.tenant-reading:hover { border-color: var(--accent); color: var(--accent); }
+.tenant-reading b { color: var(--text); font-weight: 620; }
+.tenant-reading:hover b { color: var(--accent); }
 
 /* The state is carried by the dial itself; the tile border is a second,
    quieter signal so a tenant in trouble is findable by peripheral vision. */
@@ -2102,7 +2137,8 @@ body {
   font-size: .9rem;
   color: var(--text-dim);
 }
-.tenant-nodial b { color: var(--text); font-size: 1.3rem; }
+.tenant-nodial b { color: var(--text); font-size: 1.45rem; font-weight: 660; }
+.tenant-nodial-u { font-size: .72rem; color: var(--text-faint); }
 
 /* Fixed height, rendered even when empty, so tiles line up. A ragged grid
    is what makes a wall of these look broken rather than dense. */
@@ -2111,6 +2147,7 @@ body {
   justify-content: center;
   gap: 8px;
   min-height: 13px;
+  line-height: 1.1;
   font-size: .66rem;
   font-variant-numeric: tabular-nums;
   margin-top: 1px;
@@ -2134,11 +2171,16 @@ body {
   margin-top: auto;
   padding: 4px 8px;
   border-radius: 999px;
+  border: 1px solid transparent;
   background: var(--surface-2);
+  font: inherit;
   font-size: .78rem;
   font-weight: 580;
+  color: inherit;
   overflow-wrap: anywhere;
+  cursor: pointer;
 }
+.tenant-name:hover { border-color: var(--border-strong); }
 .tenant-tile.alarm-high .tenant-name { background: var(--alarm-hi-bg); color: var(--alarm-hi); }
 .tenant-tile.alarm-low .tenant-name { background: var(--alarm-lo-bg); color: var(--alarm-lo); }
 
