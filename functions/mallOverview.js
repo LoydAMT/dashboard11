@@ -27,6 +27,34 @@
 
 const STALE_AFTER_MS = 60000;   // matches the alert engine's offline test
 
+// Mirrors the spike test in alertEngine.js, and the gauge's own copy in
+// src/lib/gauge.js. This is plain statistics over the minute rollups the
+// sweep already holds - the RULE that turns it into a dial (thresholds at
+// 10% and 90%) lives only in gauge.js and is not repeated here. Shipping
+// these two numbers instead of the readings they came from is what lets a
+// mall page draw ninety dials without holding ninety sample buffers.
+const Z_THRESHOLD = 4;
+const MIN_DELTA_FRACTION = 0.02;
+const MIN_SAMPLES = 8;
+
+function baselineOf(values) {
+  const nums = (values || []).filter(isNum);
+  if (nums.length < MIN_SAMPLES) return null;
+  const mean = nums.reduce((a, b) => a + b, 0) / nums.length;
+  const variance = nums.reduce((a, b) => a + (b - mean) ** 2, 0) / nums.length;
+  const sd = Math.sqrt(variance);
+  return {
+    mean: round(mean),
+    halfWidth: round(Math.max(sd * Z_THRESHOLD, Math.abs(mean) * MIN_DELTA_FRACTION, 1e-9)),
+  };
+}
+
+// Six significant-ish digits. These ride in a node re-read by every viewer,
+// and full float precision would triple its size to express noise.
+function round(v) {
+  return Number(v.toPrecision(6));
+}
+
 function isNum(v) {
   return typeof v === 'number' && Number.isFinite(v);
 }
@@ -40,13 +68,19 @@ function isNum(v) {
  * @param status    devices/{id}/status
  * @param tagState  { tagKey: 'ok'|'high'|'low' } from the alert engine
  * @param offline   the engine's own verdict, when it has one
+ * @param rules     alertRules/{device}, so each dial knows its own zones
+ * @param windows   the minute rollups the sweep already read, for the
+ *                  baseline of a tag with no configured threshold
  * @param now       epoch ms
  *
  * `alarm` is the WORST state across the tenant's tags, because the mall's
  * question is "does this unit need attention", not "which tag". The tag
  * detail is one click away on the tenant's own page.
  */
-function tenantRow({ deviceId, name, latest, status, tagState = {}, offline = null, now = Date.now() }) {
+function tenantRow({
+  deviceId, name, latest, status, tagState = {}, offline = null,
+  rules = {}, windows = [], now = Date.now(),
+}) {
   const lastSeen = isNum(status?.lastSeen) ? status.lastSeen : null;
   // Prefer the engine's verdict; fall back to the clock so a tenant the
   // engine has never evaluated still reports honestly instead of defaulting
@@ -61,12 +95,32 @@ function tenantRow({ deviceId, name, latest, status, tagState = {}, offline = nu
     : states.includes('low') ? 'low'
     : 'ok';
 
-  // Live values, one number per tag. Nulls are dropped rather than written
-  // as null: absence already means "no reading", and RTDB treats a null
-  // write as a delete anyway.
+  // Recent minute averages per tag, from rollups the sweep already read.
+  const recent = {};
+  for (const w of windows) {
+    for (const [k, r] of Object.entries(w?.byTag || {})) {
+      if (r && isNum(r.avg)) (recent[k] = recent[k] || []).push(r.avg);
+    }
+  }
+
+  // Live values, one entry per tag, carrying everything a dial needs so the
+  // page drawing ninety of them makes ONE subscription. Nulls are dropped
+  // rather than written: absence already means "no reading", and RTDB treats
+  // a null write as a delete anyway.
   const values = {};
   for (const [k, v] of Object.entries(latest || {})) {
-    if (v && isNum(v.value)) values[k] = v.value;
+    if (!v || !isNum(v.value)) continue;
+    const entry = { v: round(v.value) };
+    const rule = rules[k];
+    if (rule && isNum(rule.lo)) entry.lo = rule.lo;
+    if (rule && isNum(rule.hi)) entry.hi = rule.hi;
+    // Only needed when there is no threshold to scale from - sending it
+    // anyway would be bytes every viewer re-reads for nothing.
+    if (!isNum(entry.lo) && !isNum(entry.hi)) {
+      const base = baselineOf(recent[k]);
+      if (base) { entry.mean = base.mean; entry.hw = base.halfWidth; }
+    }
+    values[k] = entry;
   }
 
   return {

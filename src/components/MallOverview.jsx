@@ -1,25 +1,25 @@
 import { useState } from 'react'
-import { useMallOverview, rankTenants } from '../hooks/useMallOverview'
+import { useMallOverview, rankTenants, primaryTag, meterTag, recentAlerts } from '../hooks/useMallOverview'
 import { useCompany } from '../hooks/useCompanies'
+import { gaugeScale } from '../lib/gauge'
+import { TagGauge } from './TagGauge'
 import { formatAgo } from '../lib/time'
 
 /**
- * Every tenant in one company, on one page.
+ * Every tenant in a mall, on ONE page, each with its own dial.
  *
- * This is the landlord's page, not a tenant's. It answers three questions
- * and deliberately stops there: which units need attention, what is each
- * one drawing now, and what did each one consume yesterday. Anything about
- * a single unit over time belongs on that unit's own dashboard, which is
- * one click away.
+ * This is the whole product for a landlord: walk up to the screen and see
+ * all of it at once. Opening a single tenant is still possible, but it is
+ * the exception - not the way the page is meant to be read.
  *
- * Ordering defaults to attention rather than to name. An alphabetical list
- * of ninety shops buries the one that is offline, which is the only row
+ * ONE SUBSCRIPTION DRAWS ALL OF THEM. Every dial's thresholds and its scale
+ * arrive inside mallOverview/{companyId}, written by the sweep that already
+ * walks each device. Reading alertRules per tenant from here would be the
+ * ninety-listener fan-out the projection exists to avoid.
+ *
+ * Ordering defaults to attention rather than to name: an alphabetical wall
+ * of ninety shops buries the one that is offline, which is the only tile
  * that matters on the day it happens.
- *
- * `nowMs` is a PROP rather than a Date.now() call in the body. Reading the
- * clock while rendering is impure - the ages it produces would not update
- * on their own, so a row could sit reading "offline 2m ago" for an hour.
- * The app already ticks one clock for the whole page; this shares it.
  */
 export function MallOverview({ companyId, companyName, onOpenDevice, onClose, nowMs }) {
   const [sortKey, setSortKey] = useState('attention')
@@ -29,15 +29,14 @@ export function MallOverview({ companyId, companyName, onOpenDevice, onClose, no
     return (
       <div className="notice notice-warn">
         <h2>Overview unavailable</h2>
-        <p>
-          Could not read the overview for this company: {error.message || String(error)}
-        </p>
+        <p>Could not read this company&apos;s overview: {error.message || String(error)}</p>
         {onClose && <button type="button" onClick={onClose}>Back</button>}
       </div>
     )
   }
 
   const rows = rankTenants(tenants, sortKey)
+  const recent = recentAlerts(tenants)
   const needsAttention = (totals?.inAlarm || 0) + (totals?.offline || 0)
 
   return (
@@ -50,9 +49,7 @@ export function MallOverview({ companyId, companyName, onOpenDevice, onClose, no
             {updatedAt != null && ` · updated ${formatAgo(nowMs - updatedAt)}`}
           </p>
         </div>
-        {onClose && (
-          <button type="button" className="mall-close" onClick={onClose}>Back</button>
-        )}
+        {onClose && <button type="button" className="mall-close" onClick={onClose}>Back</button>}
       </div>
 
       <div className="mall-totals">
@@ -83,16 +80,32 @@ export function MallOverview({ companyId, companyName, onOpenDevice, onClose, no
       <div className="mall-sorts">
         {[['attention', 'Needs attention'], ['kwh', 'Consumption'], ['name', 'Name']]
           .map(([k, lbl]) => (
-            <button
-              key={k}
-              type="button"
-              className={sortKey === k ? 'is-active' : ''}
-              onClick={() => setSortKey(k)}
-            >
+            <button key={k} type="button"
+                    className={sortKey === k ? 'is-active' : ''}
+                    onClick={() => setSortKey(k)}>
               {lbl}
             </button>
           ))}
       </div>
+
+      {/* What happened, next to what is wrong now. Built from one field per
+          tenant, so the whole mall's feed costs no extra read. */}
+      {recent.length > 0 && (
+        <div className="mall-recent">
+          <h3>Recent alerts</h3>
+          <ul>
+            {recent.map((t) => (
+              <li key={t.id} className={`level-${t.lastAlert.level}`}>
+                <span className="mall-recent-when">
+                  {formatAgo(nowMs - t.lastAlert.ts)}
+                </span>
+                <span className="mall-recent-who">{t.name}</span>
+                <span className="mall-recent-what">{t.lastAlert.message}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
 
       {loading && rows.length === 0 && <p className="mall-empty">Loading…</p>}
 
@@ -104,49 +117,95 @@ export function MallOverview({ companyId, companyName, onOpenDevice, onClose, no
         </p>
       )}
 
-      <ul className="mall-list">
+      <div className="mall-grid">
         {rows.map((t) => (
-          <li key={t.id}>
-            <button
-              type="button"
-              className={`mall-row alarm-${t.alarm}`}
-              onClick={() => onOpenDevice?.(t.id)}
-            >
-              <span className={`mall-dot dot-${t.alarm}`} aria-hidden="true" />
-              <span className="mall-name">{t.name}</span>
-
-              <span className="mall-values">
-                {Object.entries(t.values).slice(0, 3).map(([k, v]) => (
-                  <span key={k} className="mall-val">
-                    <b>{typeof v === 'number' ? v.toFixed(2) : v}</b> {k}
-                  </span>
-                ))}
-                {Object.keys(t.values).length === 0 && (
-                  <span className="mall-val mall-val-none">no reading</span>
-                )}
-              </span>
-
-              <span className="mall-kwh">
-                {t.kwh?.deltaKwh != null
-                  ? <><b>{t.kwh.deltaKwh.toFixed(1)}</b> kWh</>
-                  : <span className="mall-val-none">—</span>}
-                {/* A reset makes the day's delta meaningless, so it is
-                    flagged rather than quietly billed. */}
-                {t.kwh?.resetSuspected && <em className="mall-warn"> meter reset</em>}
-              </span>
-
-              <span className="mall-state">
-                {t.alarm === 'offline'
-                  ? (t.lastSeen ? `offline ${formatAgo(nowMs - t.lastSeen)}` : 'never reported')
-                  : t.alarm === 'high' ? 'above threshold'
-                  : t.alarm === 'low' ? 'below threshold'
-                  : 'ok'}
-              </span>
-            </button>
-          </li>
+          <TenantTile key={t.id} tenant={t} nowMs={nowMs} onOpen={onOpenDevice} />
         ))}
-      </ul>
+      </div>
     </div>
+  )
+}
+
+/**
+ * One tenant: a dial, its reading, the day's meter figure, and the name.
+ *
+ * The dial is the SAME component the single-device dashboard uses, fed the
+ * same way - a configured threshold lands on 10% and 90%, an unruled tag
+ * falls back to its own recent baseline. That matters most on a wall of
+ * ninety: every tile means the same thing, so "needle in the colour" reads
+ * correctly without stopping to check any tile's numbers.
+ */
+function TenantTile({ tenant, nowMs, onOpen }) {
+  const primary = primaryTag(tenant)
+  const meter = meterTag(tenant)
+  const offline = tenant.alarm === 'offline'
+
+  const scale = primary && gaugeScale({
+    value: primary.entry.v,
+    lo: primary.entry.lo ?? null,
+    hi: primary.entry.hi ?? null,
+    // Supplied by the server rather than derived here: this page holds no
+    // sample history for ninety tenants and is never going to.
+    stats: (typeof primary.entry.mean === 'number' && typeof primary.entry.hw === 'number')
+      ? { mean: primary.entry.mean, halfWidth: primary.entry.hw }
+      : null,
+  })
+
+  return (
+    <button
+      type="button"
+      className={`tenant-tile alarm-${tenant.alarm}`}
+      onClick={() => onOpen?.(tenant.id)}
+      title={`Open ${tenant.name}`}
+    >
+      {scale ? (
+        <TagGauge
+          scale={scale}
+          alarm={offline ? 'unknown' : tenant.alarm}
+          stale={offline}
+          label={`${tenant.name}: ${primary.entry.v} ${primary.key}`}
+        >
+          <span className="card-number">{primary.entry.v.toFixed(2)}</span>
+          <span className="card-unit">{primary.key}</span>
+        </TagGauge>
+      ) : (
+        <div className="tenant-nodial">
+          {primary
+            ? <><b>{primary.entry.v.toFixed(2)}</b> {primary.key}</>
+            : <span className="mall-val-none">no reading</span>}
+        </div>
+      )}
+
+      {/* The threshold in words as well as on the arc. The panel meters this
+          replaces print only the words and leave the dial unmarked, which
+          tells you the number but never how close you are to it. */}
+      {primary && (primary.entry.hi != null || primary.entry.lo != null) && (
+        <div className="tenant-limit">
+          {primary.entry.lo != null && <span className="lim-lo">Low {primary.entry.lo}</span>}
+          {primary.entry.hi != null && <span className="lim-hi">High {primary.entry.hi}</span>}
+        </div>
+      )}
+
+      <div className="tenant-meter">
+        {meter ? <><b>{meter.entry.v.toLocaleString()}</b> kWh</> : <span>&nbsp;</span>}
+        {tenant.kwh?.deltaKwh != null && (
+          <span className="tenant-today"> · {tenant.kwh.deltaKwh.toFixed(1)} today</span>
+        )}
+        {/* A reset makes the day's delta meaningless, so it is flagged
+            rather than quietly billed. */}
+        {tenant.kwh?.resetSuspected && <em className="mall-warn"> meter reset</em>}
+      </div>
+
+      <div className="tenant-name">{tenant.name}</div>
+
+      <div className="tenant-state">
+        {offline
+          ? (tenant.lastSeen ? `offline ${formatAgo(nowMs - tenant.lastSeen)}` : 'never reported')
+          : tenant.alarm === 'high' ? 'above threshold'
+          : tenant.alarm === 'low' ? 'below threshold'
+          : 'ok'}
+      </div>
+    </button>
   )
 }
 

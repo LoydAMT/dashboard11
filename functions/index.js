@@ -489,8 +489,33 @@ exports.alertSweep = onSchedule(
           status,
           tagState: state.tags || {},
           offline: state.offline,
+          // Both already in hand from the alert evaluation above, so each
+          // tenant's dial arrives knowing its own zones and its own scale.
+          // Without these the mall page would have to read alertRules for
+          // ninety devices itself, which is the fan-out this node exists to
+          // prevent.
+          rules,
+          windows,
           now,
         });
+
+        // The most recent transition for this tenant, so the mall page can
+        // show "what happened" as well as "what is wrong now" - without
+        // reading ninety Firestore alert logs from the browser.
+        //
+        // ONE per tenant, not a growing list: bounded by construction, so
+        // there is nothing to prune and no node that quietly grows forever.
+        // A mall-wide feed is then just these sorted by time, assembled on
+        // the client for free.
+        if (events.length > 0) {
+          const last = events[events.length - 1];
+          rows[device].lastAlert = {
+            ts: last.ts,
+            kind: last.kind,
+            level: last.level || 'info',
+            message: last.message,
+          };
+        }
 
         if (events.length > 0) {
           console.log(`alertSweep: ${device} -> ${events.length} event(s): ` +
@@ -526,6 +551,11 @@ exports.alertSweep = onSchedule(
           // it had an hour ago, not keep them because we skipped the write.
           updates[`${base}/values`] =
             Object.keys(row.values).length > 0 ? row.values : null;
+          // Written only when this run produced one. Not writing leaves the
+          // previous alert in place, which is what "most recent" means -
+          // clearing it every quiet sweep would mean the feed only ever
+          // showed the last two minutes.
+          if (row.lastAlert) updates[`${base}/lastAlert`] = row.lastAlert;
         }
         const totals = rollUp(mine);
         // The company's real size, NOT the number evaluated this run. A

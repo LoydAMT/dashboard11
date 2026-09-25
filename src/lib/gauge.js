@@ -48,12 +48,20 @@ export function spread(samples) {
  * lands here, which is correct: a gauge implies a range to sit inside, and a
  * meter total has none.
  */
-export function gaugeScale({ value, lo = null, hi = null, samples = [] }) {
+export function gaugeScale({ value, lo = null, hi = null, samples = [], stats: given = null }) {
   const num = (v) => typeof v === 'number' && Number.isFinite(v)
   const usable = samples.filter(num)
   const hasLo = num(lo)
   const hasHi = num(hi)
-  const stats = usable.length >= MIN_SAMPLES ? spread(usable) : null
+  // `stats` lets a caller supply the baseline instead of the readings it was
+  // derived from. The mall page needs this: it shows ninety tenants at once
+  // and cannot hold ninety sample buffers, so the server - which already has
+  // the minute rollups in hand - sends two numbers per tag instead of a
+  // dozen. The RULE that turns a baseline into a scale stays here, in one
+  // place, rather than being reimplemented on the server and drifting.
+  const stats = (given && num(given.mean) && num(given.halfWidth))
+    ? given
+    : (usable.length >= MIN_SAMPLES ? spread(usable) : null)
 
   let centre
   let halfWidth

@@ -1220,7 +1220,7 @@ test('mallOverview: worst tag state wins, because the question is "needs attenti
   });
   assert.equal(r.alarm, 'high');
   assert.equal(r.name, 'Toy Shop');
-  assert.deepEqual(r.values, { Current: 3.4, Voltage: 230 });
+  assert.deepEqual(r.values, { Current: { v: 3.4 }, Voltage: { v: 230 } });
 });
 
 test('mallOverview: offline outranks an alarm', () => {
@@ -1245,6 +1245,42 @@ test('mallOverview: a tenant the engine never evaluated is not assumed fine', ()
     status: { lastSeen: 10 * 60000 - 1000 }, offline: null,
   });
   assert.equal(fresh.alarm, 'ok');
+});
+
+test('mallOverview: a dial arrives with its own thresholds, no extra read', () => {
+  // The whole point of the projection: ninety dials, one subscription.
+  const r = MO.tenantRow({
+    deviceId: 'd', now: 1000, status: { lastSeen: 1000 }, offline: false,
+    latest: { Current: { value: 6.7 } },
+    rules: { Current: { hi: 32 } },
+  });
+  assert.equal(r.values.Current.hi, 32);
+  // No baseline shipped when a threshold already sets the scale - those
+  // bytes would be re-read by every viewer for nothing.
+  assert.equal(r.values.Current.mean, undefined);
+});
+
+test('mallOverview: an unruled tag ships a baseline instead', () => {
+  const windows = Array.from({ length: 12 }, (_, i) => ({
+    minute: i, byTag: { Current: { avg: 3.4 + (i % 2) * 0.1 } },
+  }));
+  const r = MO.tenantRow({
+    deviceId: 'd', now: 1000, status: { lastSeen: 1000 }, offline: false,
+    latest: { Current: { value: 3.45 } }, rules: {}, windows,
+  });
+  assert.ok(typeof r.values.Current.mean === 'number', 'no baseline shipped');
+  assert.ok(r.values.Current.hw > 0, 'zero-width baseline');
+  assert.equal(r.values.Current.lo, undefined);
+});
+
+test('mallOverview: too few rollups means no baseline, not a fabricated one', () => {
+  const windows = [{ minute: 0, byTag: { Current: { avg: 3.4 } } }];
+  const r = MO.tenantRow({
+    deviceId: 'd', now: 1000, status: { lastSeen: 1000 }, offline: false,
+    latest: { Current: { value: 3.4 } }, rules: {}, windows,
+  });
+  assert.equal(r.values.Current.mean, undefined);
+  assert.equal(r.values.Current.v, 3.4, 'the reading itself must still be there');
 });
 
 test('mallOverview: a missing reading is absent, never written as null', () => {

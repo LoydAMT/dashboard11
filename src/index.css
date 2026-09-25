@@ -2053,55 +2053,121 @@ body {
   font-weight: 600;
 }
 
-.mall-list { list-style: none; margin: 0; padding: 0; }
-
-.mall-row {
-  width: 100%;
+/* A WALL of tenants, each with the same dial the single-device dashboard
+   uses. Reading this page is meant to be a glance, not a scroll: the tiles
+   are sized so a mall of ninety fits a few screens and every needle can be
+   compared against every other, because they all carry the same geometry. */
+.mall-grid {
   display: grid;
-  grid-template-columns: 10px minmax(110px, 1.4fr) minmax(120px, 1.6fr) 110px 120px;
-  align-items: center;
+  grid-template-columns: repeat(auto-fill, minmax(168px, 1fr));
   gap: 10px;
-  text-align: left;
+}
+
+.tenant-tile {
+  display: flex;
+  flex-direction: column;
   font: inherit;
   color: inherit;
+  text-align: center;
   background: var(--surface);
   border: 1px solid var(--border);
-  border-radius: 10px;
-  padding: 9px 12px;
-  margin-bottom: 5px;
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  padding: 10px 10px 8px;
   cursor: pointer;
+  transition: border-color .12s, transform .12s;
 }
-.mall-row:hover { border-color: var(--border-strong); }
+.tenant-tile:hover { border-color: var(--border-strong); transform: translateY(-1px); }
 
-.mall-dot { width: 9px; height: 9px; border-radius: 50%; background: var(--live); }
-.dot-high { background: var(--alarm-hi); }
-.dot-low { background: var(--alarm-lo); }
-.dot-offline { background: var(--text-faint); }
+/* The state is carried by the dial itself; the tile border is a second,
+   quieter signal so a tenant in trouble is findable by peripheral vision. */
+.tenant-tile.alarm-high { border-color: var(--alarm-hi); }
+.tenant-tile.alarm-low { border-color: var(--alarm-lo); }
+.tenant-tile.alarm-offline { background: var(--surface-2); }
 
-.mall-name { font-weight: 560; overflow-wrap: anywhere; }
-.mall-values { display: flex; gap: 10px; flex-wrap: wrap; }
-.mall-val { font-size: .78rem; color: var(--text-dim); font-variant-numeric: tabular-nums; }
-.mall-val b { color: var(--text); font-weight: 620; }
-.mall-val-none { color: var(--text-faint); font-style: italic; }
-.mall-kwh { font-size: .78rem; color: var(--text-dim); font-variant-numeric: tabular-nums; }
-.mall-kwh b { color: var(--text); font-weight: 620; }
-.mall-warn { color: var(--stale); font-style: normal; font-size: .72rem; }
-.mall-state { font-size: .74rem; color: var(--text-faint); text-align: right; }
+.tenant-nodial {
+  min-height: 78px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: .9rem;
+  color: var(--text-dim);
+}
+.tenant-nodial b { color: var(--text); font-size: 1.3rem; }
 
-.mall-row.alarm-offline { background: var(--surface-2); }
-.mall-row.alarm-high .mall-state { color: var(--alarm-hi); }
-.mall-row.alarm-low .mall-state { color: var(--alarm-lo); }
+.tenant-limit {
+  display: flex;
+  justify-content: center;
+  gap: 8px;
+  font-size: .68rem;
+  font-variant-numeric: tabular-nums;
+  margin-top: 2px;
+}
+.lim-hi { color: var(--alarm-hi); }
+.lim-lo { color: var(--alarm-lo); }
+
+.tenant-meter {
+  font-size: .76rem;
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+  margin-top: 4px;
+}
+.tenant-meter b { color: var(--text); font-weight: 640; }
+.tenant-today { color: var(--text-faint); }
+
+/* The name is the anchor, so it reads as a label for the tile rather than
+   as another value. */
+.tenant-name {
+  margin-top: 6px;
+  padding: 4px 8px;
+  border-radius: 999px;
+  background: var(--surface-2);
+  font-size: .78rem;
+  font-weight: 580;
+  overflow-wrap: anywhere;
+}
+.tenant-tile.alarm-high .tenant-name { background: var(--alarm-hi-bg); color: var(--alarm-hi); }
+.tenant-tile.alarm-low .tenant-name { background: var(--alarm-lo-bg); color: var(--alarm-lo); }
+
+.tenant-state { margin-top: 3px; font-size: .68rem; color: var(--text-faint); }
+.tenant-tile.alarm-high .tenant-state { color: var(--alarm-hi); }
+.tenant-tile.alarm-low .tenant-state { color: var(--alarm-lo); }
+
+/* Recent alerts across the whole mall, so the page answers "what happened"
+   as well as "what is wrong now". */
+.mall-recent {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 8px 12px;
+  margin-bottom: 10px;
+}
+.mall-recent h3 { margin: 0 0 4px; font-size: .78rem; color: var(--text-dim); font-weight: 600; }
+.mall-recent ul { list-style: none; margin: 0; padding: 0; }
+.mall-recent li {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  font-size: .76rem;
+  padding: 2px 0;
+  border-top: 1px solid var(--grid);
+}
+.mall-recent li:first-child { border-top: 0; }
+.mall-recent-when { color: var(--text-faint); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.mall-recent-who { font-weight: 580; }
+.mall-recent-what { color: var(--text-dim); overflow-wrap: anywhere; }
+.mall-recent .level-critical .mall-recent-who { color: var(--alarm-hi); }
 
 .mall-empty { color: var(--text-faint); font-size: .85rem; }
 
-/* Stacked on a phone: five columns of numbers do not survive 360px, and the
-   mall office checks this on a handset as often as at a desk. */
+/* Two tiles across on a handset rather than one: the mall office checks this
+   on a phone as often as at a desk, and a single column turns ninety tenants
+   into a very long scroll. */
 @media (max-width: 620px) {
-  .mall-row {
-    grid-template-columns: 10px 1fr;
-    row-gap: 4px;
-  }
-  .mall-values, .mall-kwh, .mall-state { grid-column: 2; text-align: left; }
+  .mall-grid { grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 8px; }
+  .mall-totals { gap: 6px; }
+  .mall-stat { flex-basis: 100px; padding: 8px 10px; }
+  .mall-stat-n { font-size: 1.3rem; }
 }
 
 .mall-entries { display: flex; flex-direction: column; gap: 6px; margin-bottom: 14px; }

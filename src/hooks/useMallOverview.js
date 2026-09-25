@@ -31,6 +31,7 @@ export function useMallOverview(companyId, enabled = true) {
       lastSeen: typeof t?.lastSeen === 'number' ? t.lastSeen : null,
       values: t?.values || {},
       kwh: t?.kwh || null,
+      lastAlert: t?.lastAlert || null,
     }))
   }, [node.data])
 
@@ -57,9 +58,8 @@ export function useMallOverview(companyId, enabled = true) {
 export function rankTenants(tenants, sortKey = 'attention') {
   const rank = { offline: 0, high: 1, low: 1, ok: 2 }
   const load = (t) => {
-    const v = t.values || {}
-    const n = v.Current ?? v.Power ?? v.kW ?? null
-    return typeof n === 'number' ? n : -1
+    const p = primaryTag(t)
+    return p ? p.entry.v : -1
   }
   const copy = [...tenants]
   if (sortKey === 'kwh') {
@@ -72,4 +72,54 @@ export function rankTenants(tenants, sortKey = 'attention') {
     const d = (rank[a.alarm] ?? 3) - (rank[b.alarm] ?? 3)
     return d !== 0 ? d : load(b) - load(a)
   })
+}
+
+/**
+ * The one tag a tenant's dial should show.
+ *
+ * Current first, then power. NEVER the kWh accumulator: it only rises, so a
+ * dial of it would read "full" forever and mean nothing. kWh is the billing
+ * figure and gets its own line under the dial, which is where the reference
+ * panel meters put it too.
+ */
+export function primaryTag(tenant) {
+  const values = tenant?.values || {}
+  const preferred = ['Current', 'Power', 'kW', 'Voltage']
+  for (const key of preferred) {
+    if (values[key] && typeof values[key].v === 'number') {
+      return { key, entry: values[key] }
+    }
+  }
+  for (const [key, entry] of Object.entries(values)) {
+    if (/kwh/i.test(key)) continue
+    if (entry && typeof entry.v === 'number') return { key, entry }
+  }
+  return null
+}
+
+/** The accumulator, shown as a number rather than a dial. */
+export function meterTag(tenant) {
+  const values = tenant?.values || {}
+  for (const [key, entry] of Object.entries(values)) {
+    if (/kwh/i.test(key) && entry && typeof entry.v === 'number') {
+      return { key, entry }
+    }
+  }
+  return null
+}
+
+/**
+ * The mall-wide alert feed, newest first.
+ *
+ * Assembled on the client from one field per tenant rather than fetched.
+ * Each tenant carries only its most recent transition, so this is bounded
+ * by the number of tenants and there is no log to page through - the full
+ * per-tenant history is still on that tenant's own page, which is where
+ * someone goes when they want it.
+ */
+export function recentAlerts(tenants, limit = 6) {
+  return tenants
+    .filter((t) => t.lastAlert && typeof t.lastAlert.ts === 'number')
+    .sort((a, b) => b.lastAlert.ts - a.lastAlert.ts)
+    .slice(0, limit)
 }
