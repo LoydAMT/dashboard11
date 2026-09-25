@@ -983,27 +983,30 @@ exports.billingApi = onRequest(
   createBillingApi(billingDeps),
 );
 
-// billingSend exists ONLY once email is switched on, and so does its secret.
+// Resend API key, held in Secret Manager and loaded ONLY by billingSend - the
+// one function that can put a bill in a tenant's inbox. To rotate it:
+//   firebase functions:secrets:set RESEND_API_KEY
+//   firebase deploy --only functions:billingSend
 //
-// The Firebase CLI asks for every secret the codebase defines on EVERY
-// functions deploy - even one naming a single unrelated function. Defining
-// RESEND_API_KEY before the key exists would stall every deploy of
-// everything at a prompt for it. So both are registered only when
-// functions/.env contains BILLING_EMAIL=on. To turn sending on:
-//
-//   1. firebase functions:secrets:set RESEND_API_KEY
-//   2. add BILLING_EMAIL=on (and optionally BILLING_FROM=...) to functions/.env
-//   3. firebase deploy --only functions:billingSend
-if (process.env.BILLING_EMAIL === 'on') {
-  const RESEND_API_KEY = defineSecret('RESEND_API_KEY');
-  exports.billingSend = onRequest(
-    // Long timeout: sending is paced to Resend's two-per-second limit, so a
-    // mall of ninety takes about a minute.
-    { region: 'asia-southeast1', timeoutSeconds: 540, secrets: [RESEND_API_KEY] },
-    createBillingSend({
-      ...billingDeps,
-      apiKey: () => RESEND_API_KEY.value(),
-      fromAddress: process.env.BILLING_FROM || 'billing@instrubytemonitoring.com',
-    }),
-  );
-}
+// The CLI asks for every secret the codebase defines on every functions
+// deploy, so this must exist in any project this code is deployed to. It
+// was created for testononlinedb on 2026-09-25 after a deploy stalled on the
+// prompt for it.
+const RESEND_API_KEY = defineSecret('RESEND_API_KEY');
+
+// The sending address. contact.instrubyte.com.ph is verified in Resend, and
+// any address on a verified domain may send. Each bill shows the MALL's name
+// as the sender, with the mall as Reply-To and CC, so tenants see who is
+// billing them and their replies go there. BILLING_FROM overrides it.
+const BILLING_FROM = process.env.BILLING_FROM || 'billing@contact.instrubyte.com.ph';
+
+exports.billingSend = onRequest(
+  // Long timeout: sending is paced to Resend's two-per-second limit, so a
+  // mall of ninety takes about a minute.
+  { region: 'asia-southeast1', timeoutSeconds: 540, secrets: [RESEND_API_KEY] },
+  createBillingSend({
+    ...billingDeps,
+    apiKey: () => RESEND_API_KEY.value(),
+    fromAddress: BILLING_FROM,
+  }),
+);
