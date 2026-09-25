@@ -26,10 +26,6 @@ if (getApps().length === 0) {
 }
 
 const ARCHIVE_RELAY_KEY = defineSecret('ARCHIVE_RELAY_KEY');
-// Resend API key for billing email. Loaded ONLY by billingSend - the one
-// function that can put a bill in a tenant's inbox. Set it with:
-//   firebase functions:secrets:set RESEND_API_KEY
-const RESEND_API_KEY = defineSecret('RESEND_API_KEY');
 
 // Receives minute-rollup packages from the edge device (Wecon RH-W / Lua)
 // and archives them into Firestore at devices/{device}/archive/{tag}_{hour}.
@@ -987,13 +983,27 @@ exports.billingApi = onRequest(
   createBillingApi(billingDeps),
 );
 
-exports.billingSend = onRequest(
-  // Long timeout: sending is paced to Resend's two-per-second limit, so a
-  // mall of ninety takes about a minute.
-  { region: 'asia-southeast1', timeoutSeconds: 540, secrets: [RESEND_API_KEY] },
-  createBillingSend({
-    ...billingDeps,
-    apiKey: () => RESEND_API_KEY.value(),
-    fromAddress: process.env.BILLING_FROM || 'billing@instrubytemonitoring.com',
-  }),
-);
+// billingSend exists ONLY once email is switched on, and so does its secret.
+//
+// The Firebase CLI asks for every secret the codebase defines on EVERY
+// functions deploy - even one naming a single unrelated function. Defining
+// RESEND_API_KEY before the key exists would stall every deploy of
+// everything at a prompt for it. So both are registered only when
+// functions/.env contains BILLING_EMAIL=on. To turn sending on:
+//
+//   1. firebase functions:secrets:set RESEND_API_KEY
+//   2. add BILLING_EMAIL=on (and optionally BILLING_FROM=...) to functions/.env
+//   3. firebase deploy --only functions:billingSend
+if (process.env.BILLING_EMAIL === 'on') {
+  const RESEND_API_KEY = defineSecret('RESEND_API_KEY');
+  exports.billingSend = onRequest(
+    // Long timeout: sending is paced to Resend's two-per-second limit, so a
+    // mall of ninety takes about a minute.
+    { region: 'asia-southeast1', timeoutSeconds: 540, secrets: [RESEND_API_KEY] },
+    createBillingSend({
+      ...billingDeps,
+      apiKey: () => RESEND_API_KEY.value(),
+      fromAddress: process.env.BILLING_FROM || 'billing@instrubytemonitoring.com',
+    }),
+  );
+}
