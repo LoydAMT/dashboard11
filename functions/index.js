@@ -18,6 +18,7 @@ const { buildSnapshot, phDateKey } = require('./kwhSnapshot');
 const AF = require('./archiveFormat');
 const { listDevices, overviewCompanies, companiesByDevice } = require('./deviceRegistry');
 const { tenantRow, rollUp } = require('./mallOverview');
+const { parseFilters, runFiltered } = require('./alertQuery');
 
 if (getApps().length === 0) {
   initializeApp();
@@ -621,15 +622,62 @@ exports.readAlerts = onRequest(
       res.status(403).json({ error: 'forbidden' }); return;
     }
 
-    const limitOf = () => Math.min(500, Math.max(1, Number(req.query.limit) || 200));
-    const beforeOf = () => Number(req.query.before);
     const rtdb = getDatabase();
+    const fs = getFirestore();
+    const filters = parseFilters(req.query);
+
+    // Firestore resumes strictly after a DOCUMENT in its own total order
+    // (ts, then path), which is what lets alerts sharing a timestamp survive
+    // a page edge - see alertQuery.js. The client holds the path; one read
+    // turns it back into a snapshot. `before` (a bare timestamp) is still
+    // honoured so an older client keeps paging, with the old edge flaw.
+    const resumeFrom = async () => {
+      if (filters.cursor) {
+        try {
+          const snap = await fs.doc(filters.cursor).get();
+          if (snap.exists) return snap;
+        } catch { /* malformed path - fall through to the start */ }
+      }
+      return null;
+    };
+    const legacyBefore = Number(req.query.before);
+
+    // Runs a base query through the filter/scan loop. `base` carries the
+    // time range, because a range on the ordered field needs no extra
+    // index; device, kind and reading are filtered in the loop so every
+    // combination works without an index of its own.
+    const serve = async (base, scope) => {
+      let q = base.orderBy('ts', 'desc');
+      if (filters.since) q = q.where('ts', '>=', filters.since);
+      if (filters.until) q = q.where('ts', '<', filters.until);
+      if (!filters.cursor && Number.isFinite(legacyBefore)) q = q.where('ts', '<', legacyBefore);
+
+      const start = await resumeFrom();
+      const toDoc = (d) => ({ id: d.id, path: d.ref.path, ts: d.get('ts'), data: d.data(), snap: d });
+      const fetchPage = async (after, n) => {
+        let pq = q;
+        if (after && after.snap) pq = pq.startAfter(after.snap);
+        else if (after === null && start) pq = pq.startAfter(start);
+        const snap = await pq.limit(n).get();
+        return { docs: snap.docs.map(toDoc), exhausted: snap.size < n };
+      };
+
+      const r = await runFiltered({ fetchPage, filters });
+      res.set('Cache-Control', 'no-store');
+      res.status(200).json({
+        ...scope,
+        alerts: r.alerts.map((a) => ({ ...a, recordedAt: undefined, companies: undefined })),
+        hasMore: r.hasMore,
+        partial: r.partial,
+        scanned: r.scanned,
+        searchedTo: r.searchedTo,
+        cursor: r.hasMore && r.last ? r.last.path : null,
+      });
+    };
 
     // COMPANY MODE: every alert across every tenant of one company, newest
     // first. One collection-group query on the `companies` field the sweep
-    // stamps, so a mall of ninety costs the same single indexed read as a
-    // mall of three - the per-device alternative is ninety requests from a
-    // browser and gets slower the more tenants a landlord has.
+    // stamps, so a mall of ninety costs what a mall of three does.
     const company = req.query.company;
     if (typeof company === 'string' && company) {
       // Membership of THAT company, checked the same way its overview node
@@ -643,17 +691,26 @@ exports.readAlerts = onRequest(
         res.status(403).json({ error: 'forbidden' }); return;
       }
 
-      const lim = limitOf();
-      const before = beforeOf();
-      let cq = getFirestore().collectionGroup('alerts')
-        .where('companies', 'array-contains', company)
-        .orderBy('ts', 'desc');
-      if (Number.isFinite(before)) cq = cq.where('ts', '<', before);
+      // Exactly one tenant selected: read that tenant's own log directly.
+      // It is complete - it includes alerts written before the sweep began
+      // stamping `companies`, which the mall-wide query cannot see - and it
+      // is cheaper, since nothing has to be scanned past.
+      //
+      // The device must actually belong to this company. Without that
+      // check, membership of any company would open any device's log by
+      // passing its id here.
+      if (filters.devices.length === 1) {
+        const only = filters.devices[0];
+        const owned = await rtdb.ref(`companies/${company}/devices/${only}`).once('value');
+        if (owned.val() !== true) { res.status(403).json({ error: 'forbidden' }); return; }
+        await serve(fs.collection('devices').doc(only).collection('alerts'), { company, device: only });
+        return;
+      }
 
-      const csnap = await cq.limit(lim).get();
-      const calerts = csnap.docs.map((d) => ({ id: d.id, ...d.data(), recordedAt: undefined }));
-      res.set('Cache-Control', 'no-store');
-      res.status(200).json({ company, alerts: calerts, hasMore: calerts.length === lim });
+      await serve(
+        fs.collectionGroup('alerts').where('companies', 'array-contains', company),
+        { company },
+      );
       return;
     }
 
@@ -671,22 +728,15 @@ exports.readAlerts = onRequest(
       res.status(403).json({ error: 'forbidden' }); return;
     }
 
-    const limit = limitOf();
-    const before = beforeOf();
-
-    let q = getFirestore().collection('devices').doc(device).collection('alerts')
-      .orderBy('ts', 'desc');
-    // Cursor paging rather than offset: "show me the next page" must not
-    // get slower the further back you scroll.
-    if (Number.isFinite(before)) q = q.where('ts', '<', before);
-
-    const snap = await q.limit(limit).get();
-    const alerts = snap.docs.map((d) => ({ id: d.id, ...d.data(), recordedAt: undefined }));
-
-    // Not cacheable: new alerts can land at any moment, and a stale alert
-    // list is worse than a slow one.
-    res.set('Cache-Control', 'no-store');
-    res.status(200).json({ device, alerts, hasMore: alerts.length === limit });
+    // A resume cursor must point inside THIS device's log. The snapshot is
+    // only ever used as a position and is never returned, so a foreign path
+    // could not leak anything - but resuming "after" a document from some
+    // other collection is meaningless, and failing loudly beats paging from
+    // a position that has nothing to do with this log.
+    if (filters.cursor && !filters.cursor.startsWith(`devices/${device}/alerts/`)) {
+      res.status(400).json({ error: 'cursor does not belong to this device' }); return;
+    }
+    await serve(fs.collection('devices').doc(device).collection('alerts'), { device });
   }
 );
 

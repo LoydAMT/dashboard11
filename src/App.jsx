@@ -389,6 +389,7 @@ function Dashboard() {
         <MallAlertHistory
           companyId={mallView.id}
           companyName={mallView.name}
+          nowMs={now}
           onClose={() => setMallLog(false)}
           onOpenDevice={(id) => { setChosenDeviceId(id); setMallView(null); setMallLog(false) }}
         />
@@ -420,7 +421,7 @@ function Dashboard() {
       )}
 
       {!mallView && ready && showAlertHistory && (
-        <AlertHistory deviceId={deviceId} onClose={() => setShowAlertHistory(false)} />
+        <AlertHistory deviceId={deviceId} nowMs={now} onClose={() => setShowAlertHistory(false)} />
       )}
 
       {!mallView && ready && !showAlertHistory && (

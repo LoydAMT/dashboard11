@@ -5,6 +5,7 @@ import { useCompany } from '../hooks/useCompanies'
 import { gaugeScale } from '../lib/gauge'
 import { TagGauge } from './TagGauge'
 import { formatAgo } from '../lib/time'
+import { BackButton } from './BackButton'
 
 /**
  * Every tenant in a mall, on ONE page, each with its own dial.
@@ -46,7 +47,7 @@ export function MallOverview({ companyId, companyName, onOpenDevice, onClose, no
       <div className="notice notice-warn">
         <h2>Overview unavailable</h2>
         <p>Could not read this company&apos;s overview: {error.message || String(error)}</p>
-        {onClose && <button type="button" onClick={onClose}>Back</button>}
+        {onClose && <BackButton onClick={onClose}>Back to dashboard</BackButton>}
       </div>
     )
   }
@@ -57,6 +58,7 @@ export function MallOverview({ companyId, companyName, onOpenDevice, onClose, no
 
   return (
     <div className="mall">
+      {onClose && <BackButton onClick={onClose}>Back to dashboard</BackButton>}
       <div className="mall-head">
         <div>
           <h2>{companyName || 'All tenants'}</h2>
@@ -65,7 +67,6 @@ export function MallOverview({ companyId, companyName, onOpenDevice, onClose, no
             {updatedAt != null && ` · updated ${formatAgo(nowMs - updatedAt)}`}
           </p>
         </div>
-        {onClose && <button type="button" className="mall-close" onClick={onClose}>Back</button>}
       </div>
 
       <div className="mall-totals">

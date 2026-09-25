@@ -1392,3 +1392,127 @@ test('mallOverview: no kWh known at all reports null, not a confident zero', () 
   assert.equal(t.kwhToday, null);
   assert.equal(t.kwhFrom, 0);
 });
+
+// ---------------------------------------------------------------------------
+//  alertQuery - filtering and paging for the alert log
+// ---------------------------------------------------------------------------
+const AQ = require('./alertQuery');
+
+// A fake log in Firestore's own total order: ts descending, then path.
+function fakeLog(rows) {
+  const docs = rows.map((r, i) => ({
+    id: `a${i}`,
+    path: `devices/${r.device}/alerts/a${String(i).padStart(4, '0')}`,
+    ts: r.ts,
+    data: { ts: r.ts, device: r.device, kind: r.kind || 'spike', tagKey: r.tagKey === undefined ? 'Current' : r.tagKey },
+  }));
+  docs.sort((a, b) => (b.ts - a.ts) || (a.path < b.path ? 1 : -1));
+  const fetchPage = async (after, n) => {
+    const from = after ? docs.indexOf(after) + 1 : 0;
+    const page = docs.slice(from, from + n);
+    return { docs: page, exhausted: from + n >= docs.length };
+  };
+  return { docs, fetchPage };
+}
+
+async function drain(log, filters, { maxScan = 1500, batch = 300 } = {}) {
+  const seen = [];
+  let after = null;
+  for (let guard = 0; guard < 200; guard++) {
+    const r = await AQ.runFiltered({ fetchPage: log.fetchPage, afterDoc: after, filters, maxScan, batch });
+    seen.push(...r.alerts);
+    if (!r.hasMore) break;
+    after = r.last;
+  }
+  return seen;
+}
+
+test('alertQuery: alerts sharing a timestamp are never skipped at a page edge', async () => {
+  // THE BUG THIS REPLACES. Paging continued from `ts < before`, and tenants
+  // share minute timestamps constantly - six devices spiking together write
+  // six alerts at the identical ts. A page ending inside that minute lost
+  // the rest of it for good.
+  const rows = [];
+  for (let m = 0; m < 5; m++) {
+    for (const d of ['wecon2', 'wecon2-c2', 'wecon2-c3', 'wecon3', 'wecon3-c2', 'wecon3-c3']) {
+      rows.push({ ts: 1_000_000 - m * 60000, device: d });
+    }
+  }
+  const log = fakeLog(rows);
+  const f = AQ.parseFilters({ limit: '4' });   // 4 does not divide 6: edges land mid-minute
+  const got = await drain(log, f, { batch: 3 });
+  assert.equal(got.length, rows.length, `returned ${got.length} of ${rows.length}`);
+  assert.equal(new Set(got.map((a) => a.id)).size, rows.length, 'an alert came back twice');
+});
+
+test('alertQuery: a tenant filter finds that tenant deep in the log, not just page one', async () => {
+  // Filtering the page already in hand would show one tenant's alerts from
+  // among the latest 200 mall-wide and look complete. It is not.
+  const rows = [];
+  for (let i = 0; i < 600; i++) rows.push({ ts: 5_000_000 - i * 1000, device: 'busy' });
+  rows.push({ ts: 1_000, device: 'quiet' });            // the oldest thing in the log
+  const log = fakeLog(rows);
+  const got = await drain(log, AQ.parseFilters({ devices: 'quiet' }));
+  assert.equal(got.length, 1);
+  assert.equal(got[0].device, 'quiet');
+});
+
+test('alertQuery: a scan that runs out of budget says so and can resume', async () => {
+  const rows = [];
+  for (let i = 0; i < 1000; i++) rows.push({ ts: 9_000_000 - i * 1000, device: 'busy' });
+  rows.push({ ts: 10, device: 'rare' });
+  const log = fakeLog(rows);
+  const f = AQ.parseFilters({ devices: 'rare' });
+  const first = await AQ.runFiltered({ fetchPage: log.fetchPage, filters: f, maxScan: 400 });
+  assert.equal(first.alerts.length, 0);
+  assert.equal(first.partial, true, 'must admit it stopped early');
+  assert.equal(first.hasMore, true);
+  assert.equal(first.scanned, 400);
+  // ...and carrying on from where it stopped reaches the match.
+  const all = await drain(log, f, { maxScan: 400 });
+  assert.equal(all.length, 1);
+});
+
+test('alertQuery: an exhausted log reports no more pages', async () => {
+  const log = fakeLog([{ ts: 3, device: 'a' }, { ts: 2, device: 'a' }]);
+  const r = await AQ.runFiltered({ fetchPage: log.fetchPage, filters: AQ.parseFilters({}) });
+  assert.equal(r.alerts.length, 2);
+  assert.equal(r.hasMore, false);
+  assert.equal(r.partial, false);
+});
+
+test('alertQuery: kind, reading and time filters combine', async () => {
+  const log = fakeLog([
+    { ts: 500, device: 'a', kind: 'alarm-high', tagKey: 'Current' },
+    { ts: 400, device: 'a', kind: 'spike', tagKey: 'Current' },
+    { ts: 300, device: 'a', kind: 'alarm-high', tagKey: 'Voltage' },
+    { ts: 200, device: 'a', kind: 'offline', tagKey: null },
+    { ts: 100, device: 'a', kind: 'alarm-high', tagKey: 'Current' },
+  ]);
+  const got = await drain(log, AQ.parseFilters({
+    kinds: 'alarm-high', tags: 'Current', since: '150', until: '600',
+  }));
+  assert.deepEqual(got.map((a) => a.ts), [500]);
+});
+
+test('alertQuery: a reading filter excludes device-level alerts', async () => {
+  // Narrowing to "Voltage" is a question about voltage. A box going offline
+  // carries no tag and is not the answer to it.
+  const log = fakeLog([{ ts: 2, device: 'a', kind: 'offline', tagKey: null }]);
+  const got = await drain(log, AQ.parseFilters({ tags: 'Voltage' }));
+  assert.equal(got.length, 0);
+});
+
+test('alertQuery: an inverted range drops the upper bound instead of returning nothing', () => {
+  // An empty log reads as a quiet site. A typo in a date picker must not
+  // produce that.
+  const f = AQ.parseFilters({ since: '500', until: '100' });
+  assert.equal(f.since, 500);
+  assert.equal(f.until, null);
+});
+
+test('alertQuery: list parameters are bounded and de-duplicated', () => {
+  assert.deepEqual(AQ.list('a, b,a,,c'), ['a', 'b', 'c']);
+  assert.equal(AQ.list(Array.from({ length: 300 }, (_, i) => `d${i}`).join(',')).length, 100);
+  assert.deepEqual(AQ.list(undefined), []);
+});
