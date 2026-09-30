@@ -53,13 +53,8 @@ export function NamingPage() {
   // cold browser (a fresh session, a private window) the same as the main
   // dashboard is, or the only way to ever reach it would be staying signed
   // in elsewhere first - which defeats visiting it directly.
-  if (!realUser) {
-    return (
-      <div className="app">
-        <SignIn />
-      </div>
-    )
-  }
+  if (!realUser) return <SignIn />
+
 
   if (!isAdmin) {
     return (

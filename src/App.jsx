@@ -357,6 +357,12 @@ function Dashboard() {
   // by `ready`) is what actually keeps it idle before this gate opens. So the
   // gate below only ever decides what gets *rendered*, never which hooks get
   // *called* - the one thing that would break the rules of hooks.
+  //
+  // Signed out is a page of its own, brand panel and all, rather than a form
+  // under the dashboard's header - and for the same reason as above it is
+  // safe to return it here: every hook has already run.
+  if (resolved && !realUser) return <SignIn />
+
   return (
     <div className="app">
       <Masthead
@@ -385,7 +391,6 @@ function Dashboard() {
         </div>
       )}
 
-      {resolved && !realUser && <SignIn />}
 
       {resolved && realUser && deviceAccess.loading && (
         <div className="notice notice-info">
