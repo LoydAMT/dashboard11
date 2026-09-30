@@ -19,6 +19,7 @@ import { mergeSeries } from './lib/series'
 import { rangeById, DEFAULT_RANGE, isRawRange } from './lib/ranges'
 import { buildTable } from './lib/table'
 import { KWH_TAG_KEY } from './lib/kwh'
+import { hasPremium } from './lib/plans'
 import { StatusBanner } from './components/StatusBanner'
 import { TagCard } from './components/TagCard'
 import { RangePicker } from './components/RangePicker'
@@ -110,6 +111,13 @@ function Dashboard() {
   // this reason.
   const isAdmin = useIsAdmin(realUser ? user : null)
 
+  // The open company's OWN plan - its alert log and billing belong to whoever
+  // subscribes, not to any one meter. The page falls back to the wall rather
+  // than staying on one the plan does not include. See lib/plans.js.
+  const companyPlan = useRtdbValue(mallView ? `companies/${mallView.id}/plan` : null, Boolean(mallView))
+  const companyPremium = hasPremium(companyPlan.data, isAdmin)
+  const mallPageShown = companyPremium ? mallPage : 'wall'
+
   // The friendly name for whichever device is selected, if one has been set
   // at /naming - falls back to the raw id on its own, so every call site
   // below can use it unconditionally.
@@ -142,6 +150,12 @@ function Dashboard() {
   // with no thresholds, and each gauge falls back to a scale inferred from
   // recent readings. A denied read is a normal state, not an error to show.
   const alertRules = useRtdbValue(deviceId ? `alertRules/${deviceId}` : null, ready)
+  // This meter's plan, projected from its companies (see lib/plans.js). A
+  // refused or missing read is Standard, never an error on screen.
+  const devicePlan = useRtdbValue(deviceId ? `devices/${deviceId}/plan` : null, ready)
+  const premium = hasPremium(devicePlan.data, isAdmin)
+  // The searchable alert history is Premium; the bell and toasts are not.
+  const alertHistoryOpen = showAlertHistory && premium
 
   const now = useNow(1000)
 
@@ -231,7 +245,10 @@ function Dashboard() {
   const [indexed, setIndexed] = useState(false)
   const [view, setView] = useState('chart')
   const [rangeId, setRangeId] = useState(DEFAULT_RANGE.id)
-  const range = rangeById(rangeId)
+  const pickedRange = rangeById(rangeId)
+  // Derived, so a plan that changes mid-session falls back by itself rather
+  // than leaving a Premium range on screen.
+  const range = pickedRange.premium && !premium ? DEFAULT_RANGE : pickedRange
   const rawView = isRawRange(range)
 
   // Derived rather than stored, for the same reason the single selection was:
@@ -288,7 +305,14 @@ function Dashboard() {
   // Tags, not bare keys — each one's own intervalMs decides whether its
   // history is read as minute rollups or as raw samples (see
   // useSeriesHistory), and a bare key has no interval to make that call with.
-  const history = useSeriesHistory(visibleTags, range, deviceId, ready && visibleKeys.length > 0)
+  //
+  // Waits for the plan, which decides whether the archive is asked at all:
+  // starting without it would build every subscription twice on load.
+  const history = useSeriesHistory(
+    visibleTags, range, deviceId,
+    ready && !devicePlan.loading && visibleKeys.length > 0,
+    premium,
+  )
 
   const merged = useMemo(
     () => mergeSeries({
@@ -346,7 +370,7 @@ function Dashboard() {
         onSwitchDevice={() => setChosenDeviceId(null)}
         alertLog={ready ? alertCenter.log : EMPTY_LOG}
         onClearAlerts={alertCenter.clearLog}
-        onOpenHistory={() => setShowAlertHistory(true)}
+        onOpenHistory={premium ? () => setShowAlertHistory(true) : null}
         nowMs={now}
       />
 
@@ -388,7 +412,7 @@ function Dashboard() {
       {/* The landlord's page. Rendered INSTEAD of the device dashboard, so
           the ninety per-device subscriptions below are never mounted while
           it is open. */}
-      {mallView && mallPage === 'log' && (
+      {mallView && mallPageShown === 'log' && (
         <MallAlertHistory
           companyId={mallView.id}
           companyName={mallView.name}
@@ -398,7 +422,7 @@ function Dashboard() {
         />
       )}
 
-      {mallView && mallPage === 'billing' && (
+      {mallView && mallPageShown === 'billing' && (
         <Billing
           companyId={mallView.id}
           companyName={mallView.name}
@@ -407,14 +431,14 @@ function Dashboard() {
         />
       )}
 
-      {mallView && mallPage === 'wall' && (
+      {mallView && mallPageShown === 'wall' && (
         <MallOverview
           companyId={mallView.id}
           companyName={mallView.name}
           nowMs={now}
           onOpenDevice={(id) => { setChosenDeviceId(id); setMallView(null) }}
-          onOpenLog={() => setMallPage('log')}
-          onOpenBilling={() => setMallPage('billing')}
+          onOpenLog={companyPremium ? () => setMallPage('log') : null}
+          onOpenBilling={companyPremium ? () => setMallPage('billing') : null}
           onClose={() => setMallView(null)}
         />
       )}
@@ -433,11 +457,11 @@ function Dashboard() {
         </div>
       )}
 
-      {!mallView && ready && showAlertHistory && (
+      {!mallView && ready && alertHistoryOpen && (
         <AlertHistory deviceId={deviceId} nowMs={now} onClose={() => setShowAlertHistory(false)} />
       )}
 
-      {!mallView && ready && !showAlertHistory && (
+      {!mallView && ready && !alertHistoryOpen && (
         <>
         <StatusBanner state={state} status={status.data} />
 
@@ -565,7 +589,7 @@ function Dashboard() {
                     </button>
                   </div>
                 )}
-                <RangePicker value={rangeId} onChange={setRangeId} />
+                <RangePicker value={range.id} onChange={setRangeId} premium={premium} />
               </div>
             </div>
   
@@ -620,7 +644,7 @@ function Dashboard() {
           </section>
         )}
 
-        {kwhTag && <KwhHistory deviceId={deviceId} tag={kwhTag} />}
+        {kwhTag && <KwhHistory deviceId={deviceId} tag={kwhTag} premium={premium} />}
 
         <footer className="footnote">
           Values are one-minute rollups from {deviceName}; timestamps shown in your

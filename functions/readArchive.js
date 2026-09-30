@@ -112,9 +112,15 @@ function idToken(req) {
   return typeof raw === 'string' && raw.length > 0 ? raw : null;
 }
 
-// verifyToken/hasAccess/getArchiveDocs are injected so tests can exercise
-// every branch without a live project - same pattern archiveRollups.js uses.
-function createHandler({ verifyToken, hasAccess, getArchiveDocs }) {
+// verifyToken/hasAccess/hasPremium/getArchiveDocs are injected so tests can
+// exercise every branch without a live project - same pattern
+// archiveRollups.js uses.
+//
+// hasPremium is the plan check (see plans.js). The archive IS the history
+// past the recent window that RTDB keeps, which the package guide makes
+// Premium - so on Standard this refuses outright rather than returning
+// fewer rows.
+function createHandler({ verifyToken, hasAccess, hasPremium, getArchiveDocs }) {
   return async function readArchiveHandler(req, res) {
     // The dashboard calls this straight from the browser. A Bearer token is
     // never attached automatically cross-origin the way a cookie would be,
@@ -165,15 +171,25 @@ function createHandler({ verifyToken, hasAccess, getArchiveDocs }) {
     const { device, tag, from, to, hours } = validation;
 
     let allowed;
+    let premium;
     try {
-      allowed = await hasAccess(decoded.uid, device);
+      [allowed, premium] = await Promise.all([
+        hasAccess(decoded.uid, device),
+        hasPremium(decoded.uid, device),
+      ]);
     } catch (err) {
       console.error('readArchive: access check failed', err);
       res.status(500).json({ error: 'internal error' });
       return;
     }
+    // Access first: someone who cannot see this device is told nothing
+    // about it, its plan included.
     if (!allowed) {
       res.status(403).json({ error: 'forbidden' });
+      return;
+    }
+    if (!premium) {
+      res.status(403).json({ error: 'premium plan required' });
       return;
     }
 

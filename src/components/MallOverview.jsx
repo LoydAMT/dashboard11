@@ -118,10 +118,13 @@ export function MallOverview({ companyId, companyName, onOpenDevice, onClose, no
           <div className="mall-recent-head">
             <h3>Recent alerts</h3>
             {/* The strip is each tenant's LATEST event only. The full log
-                is a different thing and says so. */}
-            <button type="button" className="mall-recent-all" onClick={onOpenLog}>
-              View all alerts →
-            </button>
+                is a different thing and says so - and is Premium, so on
+                Standard there is no link to it. */}
+            {onOpenLog && (
+              <button type="button" className="mall-recent-all" onClick={onOpenLog}>
+                View all alerts →
+              </button>
+            )}
           </div>
           <ul>
             {recent.map((t) => (
@@ -141,8 +144,10 @@ export function MallOverview({ companyId, companyName, onOpenDevice, onClose, no
           yet and the strip above does not render at all. */}
       {recent.length === 0 && (
         <p className="mall-empty mall-empty-log">
-          No recent alerts. <button type="button" className="mall-recent-all"
-            onClick={onOpenLog}>View all alerts →</button>
+          No recent alerts.{' '}
+          {onOpenLog && (
+            <button type="button" className="mall-recent-all" onClick={onOpenLog}>View all alerts →</button>
+          )}
         </p>
       )}
 
@@ -392,11 +397,12 @@ function fmt(v) {
  * DevicePicker renders a row component per device.
  *
  * Renders nothing for a single-device company: holding one device IS a
- * tenant, and a "view all tenants" link to a list of one is noise.
+ * tenant, and a "view all tenants" link to a list of one is noise. Nor for
+ * a company marked as a tenant's own login, whose wall the rules refuse.
  */
 export function MallEntry({ companyId, onOpen }) {
-  const { name, deviceIds, loading } = useCompany(companyId)
-  if (loading || deviceIds.length < 2) return null
+  const { name, deviceIds, tenant, loading } = useCompany(companyId)
+  if (loading || tenant || deviceIds.length < 2) return null
   return (
     <button type="button" className="mall-entry" onClick={() => onOpen(companyId, name)}>
       <span className="mall-entry-name">{name}</span>

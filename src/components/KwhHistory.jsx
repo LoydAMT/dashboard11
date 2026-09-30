@@ -1,11 +1,12 @@
 import { useMemo, useState } from 'react'
 import { useKwhHistory } from '../hooks/useKwhHistory'
 import {
-  KWH_RANGES, DEFAULT_KWH_RANGE, kwhRangeById, buildKwhRows, kwhTotal, formatKwhSpan,
+  KWH_RANGES, DEFAULT_KWH_RANGE, buildKwhRows, kwhTotal, formatKwhSpan,
   formatKwhAmount,
 } from '../lib/kwh'
 import { displayUnit } from '../lib/tags'
 import { formatLocal } from '../lib/time'
+import { offered } from '../lib/plans'
 
 // Rows are already at most a few thousand even for "all time" (see
 // lib/kwh.js) - nothing like the ten-thousand-row rollup tables elsewhere -
@@ -18,10 +19,16 @@ import { formatLocal } from '../lib/time'
  * rollups and kWh has none, and because a meter's raw pushes call for
  * something that panel does not show at all: consumption between readings,
  * not the bare running total. See lib/kwh.js and hooks/useKwhHistory.js.
+ *
+ * On Standard: the recent week only, and no total across it - the package
+ * guide gives Standard daily consumption, and weekly and monthly totals to
+ * Premium. Every row still carries its own consumption.
  */
-export function KwhHistory({ deviceId, tag }) {
+export function KwhHistory({ deviceId, tag, premium }) {
   const [rangeId, setRangeId] = useState(DEFAULT_KWH_RANGE.id)
-  const range = kwhRangeById(rangeId)
+  const ranges = offered(KWH_RANGES, premium)
+  // Derived, so a plan change mid-session falls back by itself.
+  const range = ranges.find((r) => r.id === rangeId) || DEFAULT_KWH_RANGE
   const { readings, since, loading, error } = useKwhHistory(deviceId, range, true)
 
   // Newest first, matching the convention the rollup/raw table uses (see
@@ -46,7 +53,7 @@ export function KwhHistory({ deviceId, tag }) {
 
         <div className="panel-controls">
           <div className="ranges" role="group" aria-label="Energy history range">
-            {KWH_RANGES.map((r) => (
+            {ranges.map((r) => (
               <button
                 key={r.id}
                 type="button"
@@ -66,13 +73,15 @@ export function KwhHistory({ deviceId, tag }) {
       ) : (
         <>
           <dl className="stats" aria-label={`${tag.name} consumption over ${range.label}`}>
-            <div className="stat stat-live">
-              <dt>total, {range.label.toLowerCase()}</dt>
-              <dd>
-                {fmt(total)}
-                {unit && <span className="stat-unit">{unit}</span>}
-              </dd>
-            </div>
+            {premium && (
+              <div className="stat stat-live">
+                <dt>total, {range.label.toLowerCase()}</dt>
+                <dd>
+                  {fmt(total)}
+                  {unit && <span className="stat-unit">{unit}</span>}
+                </dd>
+              </div>
+            )}
             <div className="stat">
               <dt>readings</dt>
               <dd>{rows.length.toLocaleString()}</dd>

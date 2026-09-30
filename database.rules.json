@@ -74,6 +74,16 @@
           ".write": false
         },
 
+        // "premium" or "standard", projected from companies/{id}/plan by
+        // projectCompanyAccess (see functions/plans.js). Readable on the
+        // same terms as the telemetry: it is what the dashboard uses to
+        // decide which features to offer on this meter. Never client
+        // written - a plan is what a customer pays for, not a setting.
+        "plan": {
+          ".read": "auth != null && auth.token.firebase.sign_in_provider !== 'anonymous' && (root.child('devices/'+$deviceId+'/viewers/'+auth.uid).val() === true || root.child('devices/'+$deviceId+'/operators/'+auth.uid).val() === true || root.child('admins/'+auth.uid).val() === true)",
+          ".write": false
+        },
+
         // The one write-capable subtree, and the odd one out: it drives a
         // physical VFD through the RH-W. Reading it is no more sensitive
         // than reading telemetry - it says "here is the last command and
@@ -175,11 +185,28 @@
     // members child would be exposed with it. Keeping members in their own
     // top-level node is what makes "admins can see the company list" and
     // "nobody can enumerate another company's people" both true.
+    //
+    // companies/{id}/plan and companies/{id}/tenant (see functions/plans.js)
+    // are the two fields a client may write: an admin sets them on /naming.
+    // Everything else about a company stays console-only. A write under a
+    // company re-runs projectCompanyAccess like any other edit.
     "companies": {
       ".read": "auth != null && root.child('admins/'+auth.uid).val() === true",
       "$companyId": {
         ".read": "auth != null && auth.token.firebase.sign_in_provider !== 'anonymous' && root.child('companyMembers/'+$companyId+'/'+auth.uid).exists()",
-        ".write": false
+        ".write": false,
+
+        // Only for a company that already exists, so a mistyped id cannot
+        // create a stray company holding nothing but a plan.
+        "plan": {
+          ".write": "auth != null && auth.token.firebase.sign_in_provider !== 'anonymous' && root.child('admins/'+auth.uid).val() === true",
+          ".validate": "data.parent().exists() && (newData.val() === 'premium' || newData.val() === 'standard')"
+        },
+
+        "tenant": {
+          ".write": "auth != null && auth.token.firebase.sign_in_provider !== 'anonymous' && root.child('admins/'+auth.uid).val() === true",
+          ".validate": "data.parent().exists() && newData.isBoolean()"
+        }
       }
     },
 
@@ -347,9 +374,14 @@
     // being a member of a company that lists those devices, projected into
     // viewers/ the usual way. The two agree because the same companies/ node
     // drives both.
+    //
+    // Never for a company marked tenant: true. The wall is building
+    // management's view, and on Standard a tenant's own login is withheld
+    // its meters (see functions/plans.js) - membership alone must not hand
+    // it their live values here instead.
     "mallOverview": {
       "$companyId": {
-        ".read": "auth != null && auth.token.firebase.sign_in_provider !== 'anonymous' && root.child('companyMembers/'+$companyId+'/'+auth.uid).exists()",
+        ".read": "auth != null && auth.token.firebase.sign_in_provider !== 'anonymous' && root.child('companyMembers/'+$companyId+'/'+auth.uid).exists() && root.child('companies/'+$companyId+'/tenant').val() !== true",
         ".write": false
       }
     },

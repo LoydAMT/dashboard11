@@ -7,7 +7,9 @@ export const RANGES = [
   { id: '1h', label: '1h', ms: HOUR, points: 240 },
   { id: '6h', label: '6h', ms: 6 * HOUR, points: 360 },
   { id: '24h', label: '24h', ms: DAY, points: 480 },
-  { id: '7d', label: '7d', ms: 7 * DAY, points: 600 },
+  // Premium: RTDB keeps two days, the rest comes from the archive. See
+  // lib/plans.js.
+  { id: '7d', label: '7d', ms: 7 * DAY, points: 600, premium: true },
 ]
 
 export const DEFAULT_RANGE = RANGES[1] // 6h
@@ -29,11 +31,14 @@ export const DEFAULT_RANGE = RANGES[1] // 6h
 // `bucketFloorMs` overrides the 1-minute floor mergeSeries otherwise applies —
 // without it, a 5-minute chart would still get binned into 1-minute buckets,
 // which is most of the detail raw mode exists to show.
+//
+// Every raw range is Premium - per-second detail is the package guide's
+// own example of what Premium adds.
 export const RAW_RANGES = [
-  { id: 'raw-5m', label: 'Last 5 min', ms: 5 * MINUTE, points: 300, bucketFloorMs: SECOND, raw: true },
-  { id: 'raw-15m', label: 'Last 15 min', ms: 15 * MINUTE, points: 450, bucketFloorMs: SECOND, raw: true },
-  { id: 'raw-1h', label: 'Last 1h', ms: HOUR, points: 600, bucketFloorMs: SECOND, raw: true },
-  { id: 'raw-3d', label: 'Last 3 days', ms: 3 * DAY, points: 720, bucketFloorMs: SECOND, raw: true },
+  { id: 'raw-5m', label: 'Last 5 min', ms: 5 * MINUTE, points: 300, bucketFloorMs: SECOND, raw: true, premium: true },
+  { id: 'raw-15m', label: 'Last 15 min', ms: 15 * MINUTE, points: 450, bucketFloorMs: SECOND, raw: true, premium: true },
+  { id: 'raw-1h', label: 'Last 1h', ms: HOUR, points: 600, bucketFloorMs: SECOND, raw: true, premium: true },
+  { id: 'raw-3d', label: 'Last 3 days', ms: 3 * DAY, points: 720, bucketFloorMs: SECOND, raw: true, premium: true },
 ]
 
 export const isRawRange = (range) => Boolean(range?.raw)

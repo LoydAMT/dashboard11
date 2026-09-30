@@ -1,5 +1,7 @@
 'use strict';
 
+const { isTenantCompany } = require('./plans');
+
 // Which devices the server-side sweeps should iterate.
 //
 // WHY THIS REPLACED A HARDCODED ARRAY
@@ -74,10 +76,17 @@ function companiesByDevice(companies = {}) {
  * is needed to tell them apart, and none can be forgotten when a mall is
  * set up. A one-device company would be showing a summary of a single
  * device it can already open directly.
+ *
+ * A company marked tenant: true never gets one, however many meters it
+ * has: the wall is building management's view, and on Standard a tenant's
+ * own login must not reach its meters any other way (see plans.js). The
+ * rules refuse the read as well; this just stops writing a node nobody may
+ * read.
  */
 function overviewCompanies(companies = {}) {
   return Object.entries(companies || {})
     .filter(([, c]) => c && typeof c === 'object' && Object.keys(c.devices || {}).length > 1)
+    .filter(([, c]) => !isTenantCompany(c))
     .map(([id]) => id)
     .sort();
 }

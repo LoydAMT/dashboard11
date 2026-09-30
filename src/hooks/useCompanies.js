@@ -48,6 +48,9 @@ export function useCompany(companyId) {
   const enabled = Boolean(companyId)
   const name = useRtdbValue(enabled ? `companies/${companyId}/name` : null, enabled)
   const devices = useRtdbValue(enabled ? `companies/${companyId}/devices` : null, enabled)
+  // One tenant's own login (see functions/plans.js), which never gets the
+  // building's wall.
+  const tenant = useRtdbValue(enabled ? `companies/${companyId}/tenant` : null, enabled)
 
   const deviceIds = useMemo(() => {
     if (!devices.data) return []
@@ -60,6 +63,7 @@ export function useCompany(companyId) {
   return {
     name: typeof name.data === 'string' && name.data.length > 0 ? name.data : companyId,
     deviceIds,
-    loading: name.loading || devices.loading,
+    tenant: tenant.data === true,
+    loading: name.loading || devices.loading || tenant.loading,
   }
 }

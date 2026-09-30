@@ -324,6 +324,7 @@ function makeReadHandler(overrides = {}) {
     verifyToken: overrides.verifyToken
       || (async () => ({ uid: UID, signInProvider: 'password' })),
     hasAccess: overrides.hasAccess || (async () => true),
+    hasPremium: overrides.hasPremium || (async () => true),
     getArchiveDocs: overrides.getArchiveDocs
       || (async () => {
         calls.getArchiveDocs += 1;
@@ -421,6 +422,25 @@ test('readArchive: a signed-in user without access to THIS device gets 403 and n
   assert.equal(res.statusCode, 403);
   assert.equal(res.body.rows, undefined);
   assert.equal(calls.getArchiveDocs, 0, 'must not touch Firestore before the access check passes');
+});
+
+test('readArchive: a device on Standard gets 403 and no data - the archive is Premium', async () => {
+  const { handler, calls } = makeReadHandler({ hasPremium: async () => false });
+  const res = makeReadRes();
+  await handler(makeReadReq({ query: okQuery(), headers: { 'x-id-token': 'good' } }), res);
+
+  assert.equal(res.statusCode, 403);
+  assert.equal(res.body.error, 'premium plan required');
+  assert.equal(calls.getArchiveDocs, 0);
+});
+
+test('readArchive: without access, the refusal says nothing about the plan', async () => {
+  const { handler } = makeReadHandler({ hasAccess: async () => false, hasPremium: async () => false });
+  const res = makeReadRes();
+  await handler(makeReadReq({ query: okQuery(), headers: { 'x-id-token': 'good' } }), res);
+
+  assert.equal(res.statusCode, 403);
+  assert.equal(res.body.error, 'forbidden');
 });
 
 test('readArchive: bad or missing parameters are rejected with 400', async () => {
@@ -791,6 +811,85 @@ test('projectCompanyAccess: malformed company entries are skipped, not thrown on
     companies: { good: { devices: { RHW01: true }, members: { [ALICE]: 'viewer' } }, bad: null, alsoBad: 'nope' },
   });
   assert.equal(p.deviceGrants.RHW01.viewers[ALICE], true);
+});
+
+// --- plans: Standard and Premium ------------------------------------------
+
+test('plans: a company with no plan, or an unknown one, is Standard', () => {
+  const p = computeProjection({
+    companies: {
+      c1: { devices: { RHW01: true }, members: {} },
+      c2: { plan: 'gold', devices: { wecon2: true }, members: {} },
+    },
+  });
+  assert.equal(p.devicePlans.RHW01, 'standard');
+  assert.equal(p.devicePlans.wecon2, 'standard');
+});
+
+test('plans: a meter is Premium when ANY company holding it is, whatever the order', () => {
+  // The mall pays; the tenant's own company has no plan of its own.
+  const tenantFirst = computeProjection({
+    companies: {
+      aTenant: { devices: { t1: true }, members: {} },
+      mall: { plan: 'premium', devices: { t1: true, t2: true }, members: {} },
+    },
+  });
+  const mallFirst = computeProjection({
+    companies: {
+      mall: { plan: 'premium', devices: { t1: true, t2: true }, members: {} },
+      zTenant: { devices: { t1: true }, members: {} },
+    },
+  });
+  assert.equal(tenantFirst.devicePlans.t1, 'premium');
+  assert.equal(mallFirst.devicePlans.t1, 'premium');
+});
+
+test('plans: a tenant login is withheld while the meter is on Standard', () => {
+  const p = computeProjection({
+    companies: {
+      mall: { devices: { t1: true, t2: true }, members: { [KHENT]: 'operator' } },
+      unit1: { tenant: true, devices: { t1: true }, members: { [ALICE]: 'viewer' } },
+    },
+  });
+  // Building management still sees everything...
+  assert.equal(p.deviceGrants.t1.operators[KHENT], true);
+  // ...but the tenant gets no meter.
+  assert.equal(p.deviceGrants.t1.viewers[ALICE], undefined);
+  assert.equal(p.access[ALICE], undefined);
+  // Membership is kept, so an upgrade needs no re-provisioning.
+  assert.equal(p.userCompanies[ALICE].unit1, true);
+});
+
+test('plans: a tenant login opens once the building is on Premium', () => {
+  const p = computeProjection({
+    companies: {
+      mall: { plan: 'premium', devices: { t1: true, t2: true }, members: {} },
+      unit1: { tenant: true, devices: { t1: true }, members: { [ALICE]: 'viewer' } },
+    },
+  });
+  assert.equal(p.deviceGrants.t1.viewers[ALICE], true);
+  assert.deepEqual(p.access[ALICE], { t1: 'viewer' });
+  // Only their own meter, never the neighbour's.
+  assert.equal(p.deviceGrants.t2.viewers[ALICE], undefined);
+});
+
+test('plans: a company NOT marked tenant is never limited by its plan', () => {
+  // A standalone Standard customer signs in to their own meter as always.
+  const p = computeProjection({
+    companies: { shop: { devices: { RHW01: true }, members: { [BOB]: 'viewer' } } },
+  });
+  assert.equal(p.deviceGrants.RHW01.viewers[BOB], true);
+});
+
+test('plans: the plan is written per device, and cleared with its grants', () => {
+  const p = computeProjection({
+    companies: { mall: { plan: 'premium', devices: { t1: true }, members: {} } },
+  });
+  // A device no company holds any more, as index.js adds it.
+  p.deviceGrants.gone = { viewers: {}, operators: {} };
+  const up = toUpdates(p);
+  assert.equal(up['devices/t1/plan'], 'premium');
+  assert.equal(up['devices/gone/plan'], null);
 });
 
 // --- alertEngine: server-side alert detection ---------------------------
@@ -1273,6 +1372,14 @@ test('deviceRegistry: only multi-device companies get an overview', () => {
   // No flag to set and none to forget: holding more than one device IS the
   // landlord case.
   assert.deepEqual(DR.overviewCompanies(MALL), ['ayala-mgmt']);
+});
+
+test('deviceRegistry: a tenant company never gets an overview, even with two meters', () => {
+  const companies = {
+    ...MALL,
+    'tenant-c': { tenant: true, devices: { 'ayala-c01': true, 'ayala-c02': true } },
+  };
+  assert.deepEqual(DR.overviewCompanies(companies), ['ayala-mgmt']);
 });
 
 test('mallOverview: worst tag state wins, because the question is "needs attention"', () => {
@@ -1785,11 +1892,11 @@ const auth = () => ({ verifyIdToken: async (t) => ({ uid: t, email: `${t}@x.ph`,
 const START = Date.parse('2026-08-31T14:00:00Z');
 const raw = (base, step) => Object.fromEntries([0, 1, 2, 3].map((i) => [String(START + i * 86400000), base + i * step]));
 
-function world({ secondEmail = '' } = {}) {
+function world({ secondEmail = '', plan = 'premium' } = {}) {
   const rtdb = fakeRtdb({
     admins: {},
     companyMembers: { mall: { [OPERATOR]: 'operator', [VIEWER]: 'viewer' } },
-    companies: { mall: { name: 'Demo Mall', devices: { t1: true, t2: true } } },
+    companies: { mall: { name: 'Demo Mall', plan, devices: { t1: true, t2: true } } },
     companyBilling: { mall: {
       ratePerKwh: 10, vatPct: 12, replyTo: 'billing@mall.ph', senderName: 'Demo Mall',
       tenants: { t1: { billingName: 'Toy Shop', emails: 'toys@shop.ph' }, t2: { billingName: 'Cafe', emails: secondEmail } },
@@ -1949,6 +2056,24 @@ test('billingSend: a viewer cannot send', async () => {
   await w.call(OPERATOR, PREP);
   const resend = fakeResend();
   const res = await send(w, VIEWER, resend);
+  assert.equal(res.code, 403);
+  assert.equal(resend.calls.length, 0);
+});
+
+test('billingApi: a company on Standard cannot prepare or list bills', async () => {
+  const w = world({ plan: null });   // no plan set at all
+  const prep = await w.call(OPERATOR, PREP);
+  assert.equal(prep.code, 403);
+  assert.match(prep.body.error, /Premium/);
+  assert.equal(w.docs.size, 0, 'nothing may be written');
+  const list = await w.call(VIEWER, { action: 'runs', company: 'mall' });
+  assert.equal(list.code, 403);
+});
+
+test('billingSend: a company on Standard cannot send, even as operator', async () => {
+  const w = world({ plan: 'standard', secondEmail: 'cafe@shop.ph' });
+  const resend = fakeResend();
+  const res = await send(w, OPERATOR, resend);
   assert.equal(res.code, 403);
   assert.equal(resend.calls.length, 0);
 });

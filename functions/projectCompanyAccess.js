@@ -1,5 +1,7 @@
 'use strict';
 
+const { PREMIUM, planOf, isTenantCompany } = require('./plans');
+
 // Projects companies/ down into the flat nodes the security rules can
 // actually reach.
 //
@@ -14,6 +16,11 @@
 //   devices/{deviceId}/operators/{uid} = true
 //   access/{uid}/{deviceId}            = "viewer" | "operator"
 //   userCompanies/{uid}/{companyId}    = true
+//   devices/{deviceId}/plan            = "premium" | "standard"
+//
+// The plan is projected for the same reason as the grants: readArchive,
+// readAlerts and the dashboard need "is this meter on Premium" as one
+// lookup, not a walk over every company that might hold it. See plans.js.
 //
 // It is a FULL recompute from companies/ on every run, not a delta. A delta
 // would need to know what the previous state was to un-grant correctly, and
@@ -34,11 +41,22 @@ function computeProjection({ companies, adminUids = [], existing = {} }) {
   const deviceGrants = {};
   const access = {};
   const userCompanies = {};
+  const devicePlans = {};
+
+  // Every device's plan first: the tenant-login check below needs it, and
+  // it must not depend on which company happens to be visited first.
+  for (const company of Object.values(companies || {})) {
+    if (!company || typeof company !== 'object') continue;
+    for (const deviceId of Object.keys(company.devices || {})) {
+      if (devicePlans[deviceId] !== PREMIUM) devicePlans[deviceId] = planOf(company);
+    }
+  }
 
   for (const [companyId, company] of Object.entries(companies || {})) {
     if (!company || typeof company !== 'object') continue;
     const devices = Object.keys(company.devices || {});
     const members = company.members || {};
+    const tenant = isTenantCompany(company);
 
     for (const [uid, role] of Object.entries(members)) {
       if (typeof uid !== 'string' || uid.length === 0) continue;
@@ -46,6 +64,11 @@ function computeProjection({ companies, adminUids = [], existing = {} }) {
       userCompanies[uid][companyId] = true;
 
       for (const deviceId of devices) {
+        // Separate tenant logins are a Premium feature. Withheld, not
+        // deleted: the account and its membership stay, and it opens again
+        // the moment the meter is back on Premium.
+        if (tenant && devicePlans[deviceId] !== PREMIUM) continue;
+
         deviceGrants[deviceId] = deviceGrants[deviceId] || { viewers: {}, operators: {} };
         access[uid] = access[uid] || {};
 
@@ -106,7 +129,7 @@ function computeProjection({ companies, adminUids = [], existing = {} }) {
     access[uid] = { ...devs, ...(access[uid] || {}) };
   }
 
-  return { deviceGrants, access, userCompanies };
+  return { deviceGrants, access, userCompanies, devicePlans };
 }
 
 // Turns the projection into one multi-path update. Nodes are replaced
@@ -120,6 +143,8 @@ function toUpdates(projection, { knownUids = [] } = {}) {
     const o = Object.keys(grants.operators).length ? grants.operators : null;
     updates[`devices/${deviceId}/viewers`] = v;
     updates[`devices/${deviceId}/operators`] = o;
+    // Cleared for a device no company holds any more, like its grants.
+    updates[`devices/${deviceId}/plan`] = (projection.devicePlans || {})[deviceId] || null;
   }
 
   // Every uid that has ever had an index entry must be considered, or a

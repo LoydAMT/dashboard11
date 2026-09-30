@@ -7,13 +7,15 @@ import { useRtdbValue } from '../hooks/useRtdbValue'
 import { useIsAdmin } from '../hooks/useIsAdmin'
 import { AlertThresholds } from './AlertThresholds'
 import { MallDisplay } from './MallDisplay'
+import { CompanyPlans } from './CompanyPlans'
 import { SignIn } from './SignIn'
 
 // Renaming stays one specific account, deliberately - it is a personal
 // labelling tool, not a role. Alert limits are the opposite: setting a
 // tenant's load ceiling is an operational act any admin should be able to
 // perform. So the PAGE opens for admins, and the name field is disabled
-// for anyone who is not this account.
+// for anyone who is not this account. Plans are like alert limits: any
+// admin, since admins are Instrubyte staff.
 //
 // Both are only the client-side half. The rules on naming/{deviceId} and
 // alertRules/{deviceId} are what actually decide whether a write lands;
@@ -112,6 +114,8 @@ export function NamingPage() {
           </p>
         )}
       </div>
+
+      <CompanyPlans />
 
       {deviceAccess.loading && <p>Loading your devices…</p>}
 

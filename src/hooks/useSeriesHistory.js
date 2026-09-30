@@ -74,8 +74,12 @@ const ROLLUP_KEY_CEILING = '9999999999999'
  * so a device switch (via the picker) cannot serve one device's cached rows
  * under another's key, even though in practice a switch remounts this hook
  * entirely rather than changing `deviceId` on a live instance.
+ *
+ * `archive` is whether this meter's plan includes the archive (Premium, see
+ * lib/plans.js). On Standard readArchive would refuse every request, so none
+ * is made.
  */
-export function useSeriesHistory(tags, range, deviceId, enabled = true) {
+export function useSeriesHistory(tags, range, deviceId, enabled = true, archive = true) {
   // Rows are state, not a ref: they are read while rendering, and a ref read
   // during render is not guaranteed to have been seen by React.
   //
@@ -110,7 +114,7 @@ export function useSeriesHistory(tags, range, deviceId, enabled = true) {
     // already in hand. The rows they gathered stay cached under their own
     // window key.
     for (const [key, sub] of subs.current) {
-      if (!wanted.has(key) || sub.rangeId !== range.id || sub.deviceId !== deviceId) {
+      if (!wanted.has(key) || sub.rangeId !== range.id || sub.deviceId !== deviceId || sub.archive !== archive) {
         sub.cancelled = true
         sub.unsubscribe()
         subs.current.delete(key)
@@ -120,7 +124,7 @@ export function useSeriesHistory(tags, range, deviceId, enabled = true) {
     for (const key of keyList) {
       if (subs.current.has(key)) continue
 
-      const sub = { rangeId: range.id, deviceId, cancelled: false, unsubscribe: () => {} }
+      const sub = { rangeId: range.id, deviceId, archive, cancelled: false, unsubscribe: () => {} }
       subs.current.set(key, sub)
 
       // Decided once, at the moment this subscription is (re)established -
@@ -267,7 +271,7 @@ export function useSeriesHistory(tags, range, deviceId, enabled = true) {
         // visible result of an archive outage is therefore a chart that
         // stops where RTDB stops - the same thing it did before any of this
         // existed - not an empty one.
-        if (archiveConfigured()) {
+        if (archive && archiveConfigured()) {
           fetchArchiveRows(deviceId, key, backfillSince, Date.now())
             .then((rows) => {
               if (sub.cancelled) return
@@ -303,7 +307,7 @@ export function useSeriesHistory(tags, range, deviceId, enabled = true) {
     // re-run this reconciliation on every absorbed page - tearing down and
     // recreating the very subscriptions it just built.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [keysId, range, deviceId])
+  }, [keysId, range, deviceId, archive])
 
   useEffect(() => {
     const active = subs.current

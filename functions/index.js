@@ -20,6 +20,7 @@ const { listDevices, overviewCompanies, companiesByDevice } = require('./deviceR
 const { tenantRow, rollUp } = require('./mallOverview');
 const { parseFilters, runFiltered } = require('./alertQuery');
 const { createBillingApi, createBillingSend } = require('./billingHandlers');
+const { PREMIUM } = require('./plans');
 
 if (getApps().length === 0) {
   initializeApp();
@@ -67,6 +68,16 @@ exports.readArchive = onRequest(
         rtdb.ref(`admins/${uid}`).once('value'),
       ]);
       return viewer.val() === true || operator.val() === true || admin.val() === true;
+    },
+
+    // The plan projectCompanyAccess wrote for this device. See plans.js.
+    hasPremium: async (uid, device) => {
+      const rtdb = getDatabase();
+      const [plan, admin] = await Promise.all([
+        rtdb.ref(`devices/${device}/plan`).once('value'),
+        rtdb.ref(`admins/${uid}`).once('value'),
+      ]);
+      return plan.val() === PREMIUM || admin.val() === true;
     },
 
     // Fetched by deterministic document id ({tag}_{hour}) rather than a
@@ -684,12 +695,18 @@ exports.readAlerts = onRequest(
       // Membership of THAT company, checked the same way its overview node
       // is. Being able to see one tenant does not entitle you to the
       // mall-wide log.
-      const [member, admin] = await Promise.all([
+      const [member, admin, plan] = await Promise.all([
         rtdb.ref(`companyMembers/${company}/${decoded.uid}`).once('value'),
         rtdb.ref(`admins/${decoded.uid}`).once('value'),
+        rtdb.ref(`companies/${company}/plan`).once('value'),
       ]);
       if (!(member.exists() || admin.val() === true)) {
         res.status(403).json({ error: 'forbidden' }); return;
+      }
+      // The searchable alert history is Premium (see plans.js). This is the
+      // company's OWN plan: the mall-wide log belongs to whoever subscribes.
+      if (!(plan.val() === PREMIUM || admin.val() === true)) {
+        res.status(403).json({ error: 'premium plan required' }); return;
       }
 
       // Exactly one tenant selected: read that tenant's own log directly.
@@ -720,13 +737,17 @@ exports.readAlerts = onRequest(
       res.status(400).json({ error: 'device or company required' }); return;
     }
 
-    const [viewer, operator, admin] = await Promise.all([
+    const [viewer, operator, admin, plan] = await Promise.all([
       rtdb.ref(`devices/${device}/viewers/${decoded.uid}`).once('value'),
       rtdb.ref(`devices/${device}/operators/${decoded.uid}`).once('value'),
       rtdb.ref(`admins/${decoded.uid}`).once('value'),
+      rtdb.ref(`devices/${device}/plan`).once('value'),
     ]);
     if (!(viewer.val() === true || operator.val() === true || admin.val() === true)) {
       res.status(403).json({ error: 'forbidden' }); return;
+    }
+    if (!(plan.val() === PREMIUM || admin.val() === true)) {
+      res.status(403).json({ error: 'premium plan required' }); return;
     }
 
     // A resume cursor must point inside THIS device's log. The snapshot is

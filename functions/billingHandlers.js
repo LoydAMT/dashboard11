@@ -16,6 +16,7 @@
 
 const B = require('./billing');
 const { buildBillEmail } = require('./billEmail');
+const { PREMIUM } = require('./plans');
 
 // RTDB keys and Firestore ids here are built from request input. Restricting
 // them to this alphabet is what stops "mall/../admins" or a slash from
@@ -55,18 +56,25 @@ async function caller(req, getAuth) {
  * Reading is for any member. Preparing, editing and sending is for an
  * OPERATOR of the company or a super admin: a bill is money and personal
  * data leaving the building, and "viewer" is the role meant for looking.
+ *
+ * And none of it without the company being on Premium - the package guide
+ * puts "tenants billed from these readings" there. See plans.js.
  */
 async function access(rtdb, companyId, uid) {
-  const [m, a] = await Promise.all([
+  const [m, a, p] = await Promise.all([
     rtdb.ref(`companyMembers/${companyId}/${uid}`).once('value'),
     rtdb.ref(`admins/${uid}`).once('value'),
+    rtdb.ref(`companies/${companyId}/plan`).once('value'),
   ]);
   const admin = a.val() === true;
   return {
     canRead: admin || m.exists(),
     canEdit: admin || m.val() === 'operator',
+    premium: admin || p.val() === PREMIUM,
   };
 }
+
+const NOT_PREMIUM = 'Billing is part of the Premium plan';
 
 const runsRef = (fs, companyId) => fs.collection('billing').doc(companyId).collection('runs');
 
@@ -132,6 +140,7 @@ function createBillingApi({ getDatabase, getFirestore, getAuth, FieldValue }) {
     const fs = getFirestore();
     const acl = await access(rtdb, companyId, who.uid);
     if (!acl.canRead) { res.status(403).json({ error: 'forbidden' }); return; }
+    if (!acl.premium) { res.status(403).json({ error: NOT_PREMIUM }); return; }
 
     const needEdit = ['prepare', 'update', 'discard'].includes(action);
     if (needEdit && !acl.canEdit) {
@@ -382,6 +391,7 @@ function createBillingSend({ getDatabase, getFirestore, getAuth, FieldValue, api
     const fs = getFirestore();
     const acl = await access(rtdb, companyId, who.uid);
     if (!acl.canEdit) { res.status(403).json({ error: 'Only an operator of this company can send bills' }); return; }
+    if (!acl.premium) { res.status(403).json({ error: NOT_PREMIUM }); return; }
 
     const key = apiKey();
     if (!key) { res.status(503).json({ error: 'Email sending is not configured' }); return; }

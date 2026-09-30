@@ -101,6 +101,46 @@ stays in those two files.
 
 ---
 
+## Plans: Standard and Premium
+
+Each company is on one of the two packages in the package comparison guide.
+An admin sets both fields on the **Plans** card at `/naming`. They live
+under `companies/{companyId}`, so the console works too:
+
+| Field | Value | Meaning |
+|---|---|---|
+| `plan` | `"premium"` | Premium. Anything else, or nothing, is Standard |
+| `tenant` | `true` | This company is one tenant's own login under a building |
+
+The plan follows the meter: a device is Premium when any company holding it
+is, so a mall on Premium covers every tenant's meter without each tenant's
+company needing a plan. `projectCompanyAccess` writes the result to
+`devices/{deviceId}/plan` whenever `companies/` changes. Admins see
+everything on every plan.
+
+| Premium adds | Refused on Standard by |
+|---|---|
+| History older than the two days RTDB keeps (the 7d chart) | `readArchive` |
+| Searchable alert history, per meter and mall-wide | `readAlerts` |
+| Billing | `billingApi`, `billingSend` |
+| Separate tenant logins (`tenant: true` companies) | `projectCompanyAccess`, rules |
+| Per-second detail (the Raw ranges) | dashboard only |
+| kWh beyond the last 7 days, and weekly/monthly totals | dashboard only |
+
+"Dashboard only" means hidden, not locked: that data lives under
+`devices/{id}/history`, which Standard must be able to read for its minute
+rollups and daily kWh. See [src/lib/plans.js](src/lib/plans.js).
+
+A tenant login on a Standard building keeps its account and membership. It
+just gets no meter until the building moves to Premium. A company marked
+`tenant` never gets the building's overview wall, on either plan.
+
+To roll this out: deploy `database`, `functions` and `hosting`, then set each
+Premium company's plan on `/naming` straight away. Until a company's plan is
+set it is Standard. Every save re-runs the projection.
+
+---
+
 ## What it does
 
 **Tags are discovered, never declared.** The tag list is the union of the keys
