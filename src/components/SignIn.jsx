@@ -69,7 +69,7 @@ export function SignIn() {
       <main className="login-main">
         <form className="login-form" onSubmit={submit}>
           <h1 className="login-title">Sign in</h1>
-          <p className="login-sub">Welcome back. Sign in to see your meters.</p>
+          <p className="login-sub">Welcome back. Sign in to see your systems.</p>
 
           <div className="login-field">
             <label className="login-label" htmlFor={`${id}-email`}>Email address</label>
@@ -183,15 +183,19 @@ function BrandPanel() {
 
       <div className="login-brand-body">
         <span className="login-rule" aria-hidden="true" />
-        <p className="login-headline">Every meter.<br />Live.</p>
+        <p className="login-eyebrow">Smart Monitoring &amp; Analytics Platform</p>
+        <p className="login-headline">Every System.<br />Connected.<br />Monitored.</p>
         <p className="login-lede">
-          Automatic reading and monitoring of meters, live on the web.
+          A centralized platform for real-time monitoring, data acquisition,
+          analysis, and automated alerts across industrial and utility systems.
         </p>
+        <p className="login-points-label">Key capabilities</p>
         <ul className="login-points">
-          <li><PointIcon kind="live" />Live voltage, current and frequency</li>
-          <li><PointIcon kind="alert" />Alerts on voltage loss and load limits</li>
-          <li><PointIcon kind="kwh" />Daily kWh readings for billing</li>
-          <li><PointIcon kind="live" />Water analysis</li>
+          <li><PointIcon kind="live" />Real-time data acquisition and visualization</li>
+          <li><PointIcon kind="alert" />Intelligent alerts and event notifications</li>
+          <li><PointIcon kind="trend" />Historical trends, reporting and analytics</li>
+          <li><PointIcon kind="remote" />Remote equipment and process monitoring</li>
+          <li><PointIcon kind="log" />Automated data logging and reporting</li>
         </ul>
       </div>
 
@@ -235,7 +239,26 @@ function PointIcon({ kind }) {
   const paths = {
     live: <path d="M3 12h4l2.5-6 5 12 2.5-6h4" />,
     alert: <><path d="M6 17V11a6 6 0 1 1 12 0v6l1.5 2H4.5L6 17Z" /><path d="M10 21a2 2 0 0 0 4 0" /></>,
-    kwh: <path d="M13 2 4 14h7l-1 8 9-12h-7l1-8Z" />,
+    // Axes with a rising line: history and analytics.
+    trend: <><path d="M4 4v16h16" /><path d="M8 15l3.5-4 3 2.5L19 8" /></>,
+    // A point with signal arcs either side: something monitored from afar.
+    remote: (
+      <>
+        <circle cx="12" cy="12" r="1.8" />
+        <path d="M8.2 8.2a5.4 5.4 0 0 0 0 7.6" />
+        <path d="M15.8 8.2a5.4 5.4 0 0 1 0 7.6" />
+        <path d="M5.3 5.3a9.5 9.5 0 0 0 0 13.4" />
+        <path d="M18.7 5.3a9.5 9.5 0 0 1 0 13.4" />
+      </>
+    ),
+    // A sheet with ruled lines: the logged record.
+    log: (
+      <>
+        <path d="M7 3h7l4 4v14H7V3Z" />
+        <path d="M14 3v4h4" />
+        <path d="M10 12h5M10 16h5" />
+      </>
+    ),
   }
   return (
     <span className="login-point-icon" aria-hidden="true">
