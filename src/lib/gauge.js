@@ -151,6 +151,27 @@ export function gaugeScale({ value, lo = null, hi = null, samples = [], range = 
 }
 
 /**
+ * Rough rendered width of a gauge readout, in ems of the number's font size.
+ *
+ * The readout sits in the dial's open bottom, between the two ends of the
+ * arc, and that gap is a fixed share of the dial's width. A fixed font size
+ * fits "0.12 NTU" and overflows "1259520 m³" onto the arc and the end-of-scale
+ * labels. index.css divides the gap by this figure (as --fit) so the text
+ * shrinks just enough to fit, and never grows past its normal size.
+ *
+ * Estimates, not measurement: measuring would need a layout pass per card per
+ * update. Digits are tabular (~0.6em); separators are narrower; the unit is
+ * rendered at about half size.
+ */
+export function readoutFit(number, unit) {
+  let em = 0
+  for (const ch of String(number ?? '')) em += /\d/.test(ch) ? 0.6 : 0.35
+  em += String(unit ?? '').length * 0.29
+  if (unit) em += 0.2   // the gap between number and unit
+  return Math.max(em, 2.5)
+}
+
+/**
  * Six evenly spaced labelled marks, rounded for reading rather than for
  * precision - the dial is for "roughly where am I", the printed number
  * underneath is for the actual value.
@@ -163,15 +184,32 @@ export function gaugeScale({ value, lo = null, hi = null, samples = [], range = 
 export function ticksFor(min, max, count = 6) {
   const span = max - min
   if (!(span > 0)) return []
-  // Decimals from the span, not from each value, so the labels line up
-  // instead of mixing "0" with "11.11".
-  const step = span / (count - 1)
-  const dp = step >= 0.5 ? 0 : step >= 0.05 ? 1 : step >= 0.005 ? 2 : 3
 
-  const build = (n) => Array.from({ length: n }, (_, i) => {
-    const pct = i / (n - 1)
-    return { pct, label: (min + span * pct).toFixed(dp) }
-  })
+  // Large readings are labelled in thousands or millions. A totalizer at
+  // 1,259,503 m³ would otherwise print seven-digit marks that crowd the
+  // reading in the middle of the dial; "1.26M" says the same at a glance.
+  const big = Math.max(Math.abs(min), Math.abs(max))
+  const [div, suffix] = big >= 1e6 ? [1e6, 'M'] : big >= 1e4 ? [1e3, 'k'] : [1, '']
+
+  const build = (n) => {
+    // Decimals from the step, not from each value, so the labels line up
+    // instead of mixing "0" with "11.11".
+    const step = span / (n - 1) / div
+    let dp = step >= 0.5 ? 0 : step >= 0.05 ? 1 : step >= 0.005 ? 2 : 3
+    const make = () => Array.from({ length: n }, (_, i) => {
+      const pct = i / (n - 1)
+      return { pct, label: ((min + span * pct) / div).toFixed(dp) + suffix }
+    })
+    // Rounding can land two neighbouring marks on the same label - a pH
+    // scale of 7.70-8.00 printed "7.8" twice and "8.0" twice. A scale that
+    // repeats itself is wrong, so add a decimal until every mark differs.
+    let ticks = make()
+    while (dp < 4 && new Set(ticks.map((t) => t.label)).size < ticks.length) {
+      dp += 1
+      ticks = make()
+    }
+    return ticks
+  }
 
   // Six marks is the default, but a scale that needs long labels - a tight
   // range forcing decimals, or a tag reading in the hundreds of thousands -

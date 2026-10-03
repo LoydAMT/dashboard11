@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { useRtdbValue } from '../hooks/useRtdbValue'
 import { useMallOverview, rankTenants, visibleTags, recentAlerts } from '../hooks/useMallOverview'
 import { useCompany } from '../hooks/useCompanies'
-import { gaugeScale } from '../lib/gauge'
+import { gaugeScale, readoutFit } from '../lib/gauge'
 import { TagGauge } from './TagGauge'
 import { formatAgo } from '../lib/time'
 import { BackButton } from './BackButton'
@@ -243,6 +243,7 @@ function TenantTile({ tenant, nowMs, onOpen, live, chosen, picked, onPick }) {
             alarm={offline ? 'unknown' : tenant.alarm}
             stale={offline}
             label={`${tenant.name}: ${primary.entry.v} ${unit}`}
+            fit={readoutFit(fmt(primary.entry.v), unit)}
           >
             <span className="card-number">{fmt(primary.entry.v)}</span>
             <span className="card-unit">{unit}</span>

@@ -77,8 +77,10 @@ function arcPath(from, to, radius = R) {
  * @param scale  result of gaugeScale(), never null
  * @param alarm  'high' | 'low' | 'ok' | 'none' | 'unknown'
  * @param stale  true when the reading is too old to trust
+ * @param fit    readoutFit() (lib/gauge.js) of the text in `children`;
+ *               sizes it to the gap between the arc's ends
  */
-export function TagGauge({ scale, alarm, stale, children, label, compact = false }) {
+export function TagGauge({ scale, alarm, stale, children, label, compact = false, fit = null }) {
   const { pct, loStop, hiStop, offScale, inferred, ticks } = scale
   const box = compact ? VB_COMPACT : VB
 
@@ -155,7 +157,7 @@ export function TagGauge({ scale, alarm, stale, children, label, compact = false
         )}
       </svg>
 
-      <div className="gauge-readout">{children}</div>
+      <div className="gauge-readout" style={fit ? { '--fit': fit } : undefined}>{children}</div>
     </div>
   )
 }

@@ -1,6 +1,6 @@
 import { formatValue, displayUnit, limitState } from '../lib/tags'
 import { formatAgo } from '../lib/time'
-import { gaugeScale } from '../lib/gauge'
+import { gaugeScale, readoutFit } from '../lib/gauge'
 import { TagGauge } from './TagGauge'
 
 /** "1h 4m", "6m", never "0m" - a just-started episode reads as "just now" instead. */
@@ -58,9 +58,10 @@ export function TagCard({ tag, stale, shown, color, blocked, maxSeries, onSelect
   ].filter(Boolean).join(', ')
 
   // The reading itself, used inside the gauge and on its own without one.
+  const numberText = tag.hasReading ? formatValue(tag) : '—'
   const readout = (
     <>
-      <span className="card-number">{tag.hasReading ? formatValue(tag) : '—'}</span>
+      <span className="card-number">{numberText}</span>
       {unit && <span className="card-unit">{unit}</span>}
     </>
   )
@@ -103,6 +104,7 @@ export function TagCard({ tag, stale, shown, color, blocked, maxSeries, onSelect
           alarm={alarm}
           stale={stale}
           label={gaugeLabel(tag, gauge, unit)}
+          fit={readoutFit(numberText, unit)}
         >
           {readout}
         </TagGauge>

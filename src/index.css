@@ -493,6 +493,8 @@ body {
 .gauge {
   position: relative;
   margin-top: 4px;
+  /* The readout sizes itself against the dial's own width (cqi below). */
+  container-type: inline-size;
 }
 
 .gauge-svg {
@@ -583,19 +585,32 @@ body {
   display: flex;
   align-items: baseline;
   justify-content: center;
-  gap: 4px;
+  gap: .2em;
   pointer-events: none;
+  white-space: nowrap;
+  /* Sized to the gap between the arc's two ends - about 36% of the dial's
+     width - divided by the text's estimated width in ems (--fit, from
+     readoutFit in lib/gauge.js). Short readings stay at the normal size; a
+     long one like "1259520 m³" shrinks instead of running onto the arc and
+     the end-of-scale labels. The plain size first is the fallback for a
+     browser without container units. */
+  font-size: 1.25rem;
+  font-size: clamp(.8rem, calc(36cqi / var(--fit, 4)), 1.3rem);
 }
 
-.gauge .card-number { font-size: 1.5rem; line-height: 1.05; }
-.gauge .card-unit { font-size: .76rem; }
+/* Number and unit scale together, from the readout's size. */
+.gauge .card-number { font-size: 1em; line-height: 1.05; }
+.gauge .card-unit { font-size: .52em; }
 
 /* On a tile the dial has no numeric scale to compete with, so the reading
-   can sit lower and larger without landing on anything. */
+   can sit lower and take a wider share of the gap. */
 .gauge-compact { margin-top: 0; }
-.gauge-compact .gauge-readout { bottom: 1%; }
-.gauge-compact .card-number { font-size: 1.32rem; font-weight: 660; }
-.gauge-compact .card-unit { font-size: .68rem; }
+.gauge-compact .gauge-readout {
+  bottom: 1%;
+  font-size: 1.15rem;
+  font-size: clamp(.78rem, calc(46cqi / var(--fit, 4)), 1.25rem);
+}
+.gauge-compact .card-number { font-weight: 660; }
 
 @media (prefers-reduced-motion: reduce) {
   .gauge-fill, .gauge-needle { transition: none; }
