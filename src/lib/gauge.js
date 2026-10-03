@@ -153,11 +153,11 @@ export function gaugeScale({ value, lo = null, hi = null, samples = [], range = 
 /**
  * Rough rendered width of a gauge readout, in ems of the number's font size.
  *
- * The readout sits in the dial's open bottom, between the two ends of the
- * arc, and that gap is a fixed share of the dial's width. A fixed font size
- * fits "0.12 NTU" and overflows "1259520 m³" onto the arc and the end-of-scale
- * labels. index.css divides the gap by this figure (as --fit) so the text
- * shrinks just enough to fit, and never grows past its normal size.
+ * The readout sits in the dial's centre, inside the arc, and that space is a
+ * fixed share of the dial's width. A fixed font size fits "0.12 NTU" and
+ * overflows "1259520 m³" onto the arc. index.css divides the space by this
+ * figure (as --fit) so the text shrinks just enough to fit, and never grows
+ * past its normal size.
  *
  * Estimates, not measurement: measuring would need a layout pass per card per
  * update. Digits are tabular (~0.6em); separators are narrower; the unit is

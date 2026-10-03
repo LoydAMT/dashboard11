@@ -1,11 +1,12 @@
 /**
  * A tag's reading as a radial dial: a 250° sweep opening at the bottom, a
  * labelled scale, a fill showing how far along the reading sits, and alert
- * zones occupying the first and last 10% of the arc.
+ * zones occupying the first and last 10% of the arc. There is no needle - the
+ * fill is the pointer, and the printed reading sits in the dial's centre.
  *
  * WHY THE ZONES ARE A FIXED 10% rather than proportional to the real
  * numbers: a wall of these is read by shape, not by arithmetic. Fixing the
- * zones means "needle in the coloured part" carries the same meaning on
+ * zones means "fill reaching the coloured part" carries the same meaning on
  * every card, whether the tag swings between 210 and 250 V or between 0 and
  * 10 A. The scale underneath adapts (lib/gauge.js); the picture does not.
  * A dial whose scale changes per card cannot be compared across a row, which
@@ -13,7 +14,7 @@
  * in text and leaves it off the arc.
  *
  * The printed number is NEVER clamped, so a reading past the end of the
- * scale still shows its true value even though the needle has run out of arc.
+ * scale still shows its true value even though the fill has run out of arc.
  */
 
 const CX = 50
@@ -22,8 +23,8 @@ const R = 34           // arc radius
 const STROKE = 8
 const LABEL_R = R + 11 // scale numbers sit outside the band
 
-// Sweep runs clockwise from lower-left to lower-right, leaving the bottom
-// open for the reading. 0° points right, angles increase anticlockwise.
+// Sweep runs clockwise from lower-left to lower-right, open at the bottom.
+// 0° points right, angles increase anticlockwise.
 const A0 = 215
 const A1 = -35
 
@@ -46,7 +47,7 @@ const VB = { x: -11, y: 0, w: 122, h: 82 }
 // COMPACT drops the numeric scale and tightens the box. On a wall of tenant
 // tiles those numbers are too small to read and land on top of the reading
 // in the middle - they cost legibility and buy nothing. The zones and the
-// needle still carry the meaning, and the exact value is printed large in
+// fill still carry the meaning, and the exact value is printed large in
 // the centre, which is what anyone actually reads at that size.
 const VB_COMPACT = { x: 6, y: 2, w: 88, h: 76 }
 
@@ -84,7 +85,7 @@ export function TagGauge({ scale, alarm, stale, children, label, compact = false
   const { pct, loStop, hiStop, offScale, inferred, ticks } = scale
   const box = compact ? VB_COMPACT : VB
 
-  // A stale reading gets the scale but no needle and no fill: the position
+  // A stale reading gets the scale but no fill: the position
   // of an hours-old value is not a fact about now. The card's age line says
   // how old.
   const live = !stale && pct != null
@@ -97,9 +98,6 @@ export function TagGauge({ scale, alarm, stale, children, label, compact = false
     alarm === 'high' && 'gauge-alarm-high',
     alarm === 'low' && 'gauge-alarm-low',
   ].filter(Boolean).join(' ')
-
-  const tip = live ? pointAt(pct, R + STROKE / 2 + 1) : null
-  const hub = live ? pointAt(pct, 9) : null
 
   return (
     <div className={cls}>
@@ -138,13 +136,8 @@ export function TagGauge({ scale, alarm, stale, children, label, compact = false
           )
         })}
 
-        {live && (
-          <>
-            <line className="gauge-needle" x1={hub.x} y1={hub.y} x2={tip.x} y2={tip.y}
-                  strokeLinecap="round" />
-            <circle className="gauge-hub" cx={CX} cy={CY} r={3.4} />
-          </>
-        )}
+        {/* No needle: the fill alone marks where the reading sits, and the
+            reading itself takes the dial's centre (index.css). */}
 
         {/* Arrow at the end a reading ran past, so "pinned to the end" is
             never mistaken for "sitting exactly on the threshold". */}

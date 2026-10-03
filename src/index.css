@@ -193,6 +193,37 @@ body {
   min-width: 0;
 }
 
+/* Client logos for the device on screen (lib/brands.js), set off from the
+   Instrubyte mark by a hairline so they read as "for" rather than "by". */
+.masthead-partners {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: 4px;
+  padding-left: 12px;
+  border-left: 1px solid var(--border);
+  min-width: 0;
+}
+
+/* The source images are JPEGs on white, with no transparency. A small white
+   plate makes that white look intentional in both themes instead of showing
+   as a hard white box on the dark background. */
+.masthead-partner {
+  height: 40px;
+  width: auto;
+  flex: none;
+  box-sizing: border-box;
+  padding: 2px 5px;
+  background: #fff;
+  border-radius: 6px;
+  box-shadow: 0 0 0 1px var(--border);
+}
+
+@media (max-width: 560px) {
+  .masthead-partners { gap: 6px; padding-left: 8px; margin-left: 0; }
+  .masthead-partner { height: 30px; padding: 2px 4px; }
+}
+
 .masthead h1 {
   margin: 0;
   font-size: 1.05rem;
@@ -509,17 +540,18 @@ body {
   stroke-linecap: round;
 }
 
-/* How far along the reading sits. Deliberately quieter than the zones: it
-   answers "how much", the zones answer "is this a problem". */
+/* How far along the reading sits - with no needle, this is the pointer, so
+   it is drawn firmly enough to read at a glance. The zones still paint over
+   it at either end. */
 .gauge-fill {
   stroke: var(--accent);
   stroke-linecap: round;
-  opacity: .5;
+  opacity: .8;
   transition: d .45s ease;
 }
 
-.gauge-alarm-high .gauge-fill { stroke: var(--alarm-hi); opacity: .38; }
-.gauge-alarm-low  .gauge-fill { stroke: var(--alarm-lo); opacity: .38; }
+.gauge-alarm-high .gauge-fill { stroke: var(--alarm-hi); opacity: .65; }
+.gauge-alarm-low  .gauge-fill { stroke: var(--alarm-lo); opacity: .65; }
 
 .gauge-zone { stroke-linecap: round; }
 .gauge-zone-lo { stroke: var(--alarm-lo); }
@@ -546,23 +578,6 @@ body {
   font-variant-numeric: tabular-nums;
 }
 
-.gauge-needle {
-  stroke: var(--text);
-  stroke-width: 2.4;
-  transition: x1 .45s ease, y1 .45s ease, x2 .45s ease, y2 .45s ease;
-}
-
-.gauge-hub {
-  fill: var(--surface);
-  stroke: var(--text);
-  stroke-width: 2;
-}
-
-.gauge-alarm-high .gauge-needle { stroke: var(--alarm-hi); }
-.gauge-alarm-high .gauge-hub { stroke: var(--alarm-hi); }
-.gauge-alarm-low  .gauge-needle { stroke: var(--alarm-lo); }
-.gauge-alarm-low  .gauge-hub { stroke: var(--alarm-lo); }
-
 .gauge-offscale {
   fill: var(--alarm-hi);
   font-size: 8px;
@@ -570,50 +585,52 @@ body {
 }
 .gauge-alarm-low .gauge-offscale { fill: var(--alarm-lo); }
 
-/* A stale reading draws the scale but no needle and no fill. */
+/* A stale reading draws the scale but no fill. */
 .gauge-stale .gauge-zone-lo,
 .gauge-stale .gauge-zone-hi { opacity: .28; }
 .gauge-stale .gauge-tick-label { opacity: .6; }
 
-/* The reading sits in the dial's open bottom, where the sweep leaves a gap
-   on purpose, so the card carries one focal point rather than two. */
+/* The reading sits in the centre of the dial - where the needle's hub used
+   to be - so the card carries one focal point rather than two. 63% down is
+   the arc's centre (y 52 of the 82-unit viewBox in TagGauge.jsx). */
 .gauge-readout {
   position: absolute;
   left: 0;
   right: 0;
-  bottom: 4%;
+  top: 63%;
+  transform: translateY(-50%);
   display: flex;
   align-items: baseline;
   justify-content: center;
   gap: .2em;
   pointer-events: none;
   white-space: nowrap;
-  /* Sized to the gap between the arc's two ends - about 36% of the dial's
-     width - divided by the text's estimated width in ems (--fit, from
-     readoutFit in lib/gauge.js). Short readings stay at the normal size; a
-     long one like "1259520 m³" shrinks instead of running onto the arc and
-     the end-of-scale labels. The plain size first is the fallback for a
-     browser without container units. */
+  /* Sized to the space inside the arc - about 40% of the dial's width at
+     the centre line, inside the tick marks - divided by the text's
+     estimated width in ems (--fit, from readoutFit in lib/gauge.js). Short
+     readings stay at the normal size; a long one like "1259520 m³" shrinks
+     instead of running onto the arc. The plain size first is the fallback
+     for a browser without container units. */
   font-size: 1.25rem;
-  font-size: clamp(.8rem, calc(36cqi / var(--fit, 4)), 1.3rem);
+  font-size: clamp(.8rem, calc(40cqi / var(--fit, 4)), 1.3rem);
 }
 
 /* Number and unit scale together, from the readout's size. */
 .gauge .card-number { font-size: 1em; line-height: 1.05; }
 .gauge .card-unit { font-size: .52em; }
 
-/* On a tile the dial has no numeric scale to compete with, so the reading
-   can sit lower and take a wider share of the gap. */
+/* On a tile the dial has no numeric scale and a tighter box, so the arc's
+   centre sits at 66% (y 50 of 76) and its inside is a wider share of it. */
 .gauge-compact { margin-top: 0; }
 .gauge-compact .gauge-readout {
-  bottom: 1%;
+  top: 66%;
   font-size: 1.15rem;
-  font-size: clamp(.78rem, calc(46cqi / var(--fit, 4)), 1.25rem);
+  font-size: clamp(.78rem, calc(54cqi / var(--fit, 4)), 1.25rem);
 }
 .gauge-compact .card-number { font-weight: 660; }
 
 @media (prefers-reduced-motion: reduce) {
-  .gauge-fill, .gauge-needle { transition: none; }
+  .gauge-fill { transition: none; }
 }
 
 .card-limits-inferred { font-style: italic; }

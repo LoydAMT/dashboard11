@@ -15,6 +15,7 @@ import { useAlertCenter } from './hooks/useAlertCenter'
 import { systemState, stalenessThreshold, tagStalenessThreshold, isStaleLevel } from './lib/health'
 import { discoverTagKeys, buildTag, formatValue, displayUnit, limitState, FREQUENCY_TAG_KEY } from './lib/tags'
 import { colorForIndex, MAX_SERIES } from './lib/palette'
+import { brandsFor } from './lib/brands'
 import { mergeSeries } from './lib/series'
 import { rangeById, DEFAULT_RANGE, isRawRange } from './lib/ranges'
 import { buildTable } from './lib/table'
@@ -381,6 +382,7 @@ function Dashboard() {
     <div className="app">
       <Masthead
         deviceName={ready ? deviceName : null}
+        partners={ready && !mallView ? brandsFor(deviceId) : undefined}
         periodMs={periodMs}
         email={ready ? user?.email : null}
         onSignOut={signOutUser}
@@ -734,6 +736,7 @@ function Stat({ label, tag, value, live = false }) {
 function Masthead({
   deviceName, periodMs, email, onSignOut, theme, onThemeChange,
   canSwitchDevice, onSwitchDevice, alertLog, onClearAlerts, nowMs, onOpenHistory,
+  partners = [],
 }) {
   return (
     <header className="masthead">
@@ -745,6 +748,16 @@ function Masthead({
           <h1>INSTRUBYTE</h1>
           <span className="masthead-tagline">Telemetry</span>
         </div>
+        {/* The client's own marks, for the device on screen (lib/brands.js).
+            Real alt text here: unlike the Instrubyte mark, nothing else on
+            the page names these organisations. */}
+        {partners.length > 0 && (
+          <div className="masthead-partners">
+            {partners.map((p) => (
+              <img key={p.src} className="masthead-partner" src={p.src} alt={p.alt} />
+            ))}
+          </div>
+        )}
       </div>
       <div className="masthead-right">
         {deviceName && (
