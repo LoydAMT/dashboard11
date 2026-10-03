@@ -11,7 +11,7 @@ import { GaugeDisplay } from './GaugeDisplay'
 import { CompanyPlans } from './CompanyPlans'
 import { SignIn } from './SignIn'
 
-// Renaming stays one specific account, deliberately - it is a personal
+// Renaming stays a short named list of accounts, deliberately - it is a
 // labelling tool, not a role. Alert limits are the opposite: setting a
 // tenant's load ceiling is an operational act any admin should be able to
 // perform. So the PAGE opens for admins, and the name field is disabled
@@ -21,7 +21,11 @@ import { SignIn } from './SignIn'
 // Both are only the client-side half. The rules on naming/{deviceId} and
 // alertRules/{deviceId} are what actually decide whether a write lands;
 // these constants just stop the UI offering something that would fail.
-const NAMING_ACCESS_UID = 'ROz1Xq3b4yReAPkLNGJCFbj6inV2'
+// Keep in step with the naming/$deviceId .write rule.
+const NAMING_ACCESS_UIDS = new Set([
+  'ROz1Xq3b4yReAPkLNGJCFbj6inV2',
+  'ZwULfPBOP2PIMLzOCMKgEZ1RaZC3',
+])
 
 /**
  * /naming - set a device's display name, shared with every signed-in
@@ -37,7 +41,7 @@ export function NamingPage() {
   const { user, resolved, realUser } = useAuth()
   const deviceAccess = useDeviceAccess(realUser ? user : null)
   const isAdmin = useIsAdmin(realUser ? user : null)
-  const mayRename = user?.uid === NAMING_ACCESS_UID
+  const mayRename = NAMING_ACCESS_UIDS.has(user?.uid)
 
   if (!resolved) {
     return (
@@ -105,7 +109,7 @@ export function NamingPage() {
         </p>
         {!mayRename && (
           <p className="admin-hint">
-            Renaming is restricted to one account, so the name fields are
+            Renaming is restricted to named accounts, so the name fields are
             read-only for you. Alert thresholds are editable by any admin.
           </p>
         )}

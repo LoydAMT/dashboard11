@@ -422,7 +422,9 @@
     "naming": {
       "$deviceId": {
         ".read": "auth != null && auth.token.firebase.sign_in_provider !== 'anonymous' && (root.child('devices/'+$deviceId+'/viewers/'+auth.uid).val() === true || root.child('devices/'+$deviceId+'/operators/'+auth.uid).val() === true || root.child('admins/'+auth.uid).val() === true)",
-        ".write": "auth.uid === 'ROz1Xq3b4yReAPkLNGJCFbj6inV2'",
+        // Named accounts only - keep in step with NAMING_ACCESS_UIDS in
+        // components/NamingPage.jsx.
+        ".write": "auth.uid === 'ROz1Xq3b4yReAPkLNGJCFbj6inV2' || auth.uid === 'ZwULfPBOP2PIMLzOCMKgEZ1RaZC3'",
         // Either a real, short label, or the key is being removed entirely
         // (clearing the override, back to showing the raw id) - an empty
         // string is deliberately not a valid stored value, so "cleared" and
