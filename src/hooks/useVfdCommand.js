@@ -166,6 +166,10 @@ export function useVfdCommand(deviceId, enabled) {
 
   return {
     known: lastKnown(node.data),
+    // Whether this device has a commands/ node at all. Only a box that
+    // drives a VFD has one; VfdControl uses it to stay off devices that
+    // have nothing to command.
+    exists: node.data != null,
     flight,
     busy,
     settled: Boolean(flight && SETTLED.has(flight.phase)),

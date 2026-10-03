@@ -25,7 +25,7 @@ export function VfdControl({ deviceId, mayControl, authResolved, frequencyTag, n
   // database rule for commands/ .read matches that - viewer-or-operator-or-
   // admin, same as telemetry. mayControl narrows only whether send() may
   // write, further down.
-  const { known, flight, busy, settled, send, dismiss, loading, error } =
+  const { known, exists, flight, busy, settled, send, dismiss, loading, error } =
     useVfdCommand(deviceId, true)
   const { name: deviceName } = useDeviceName(deviceId)
 
@@ -42,6 +42,15 @@ export function VfdControl({ deviceId, mayControl, authResolved, frequencyTag, n
     if (confirming != null && !d.open) d.showModal()
     else if (confirming == null && d.open) d.close()
   }, [confirming])
+
+  // Only a device that actually drives a VFD gets this panel. Two signs of
+  // one, either is enough: the box publishes the drive's output Frequency, or
+  // the device has a commands/ node (the box polls it; RHW01 and the wecon3
+  // demo have one). A water analyser or a plain meter has neither, and a
+  // Start/Stop panel there invites pressing buttons that nothing will ever
+  // read. Decided after every hook above has run, so hiding it cannot change
+  // the hook order.
+  if (!frequencyTag && !exists) return null
 
   const status = describeFlight(flight, now)
   const disabled = !mayControl || busy

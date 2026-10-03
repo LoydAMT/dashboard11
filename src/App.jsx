@@ -484,7 +484,8 @@ function Dashboard() {
             authResolved is always true here, since VfdControl only ever
             renders once `ready` (a resolved device) is true; kept as a prop
             so its own "checking session" copy stays correct if it is ever
-            reused somewhere reachable before this gate. */}
+            reused somewhere reachable before this gate. It renders nothing
+            on a device without a VFD (no Frequency tag, no commands/ node). */}
         <VfdControl
           deviceId={deviceId}
           mayControl={mayControl}
