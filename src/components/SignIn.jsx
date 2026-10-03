@@ -185,12 +185,13 @@ function BrandPanel() {
         <span className="login-rule" aria-hidden="true" />
         <p className="login-headline">Every meter.<br />Live.</p>
         <p className="login-lede">
-          Automatic reading and monitoring of tenant meters, live on the web.
+          Automatic reading and monitoring of meters, live on the web.
         </p>
         <ul className="login-points">
           <li><PointIcon kind="live" />Live voltage, current and frequency</li>
           <li><PointIcon kind="alert" />Alerts on voltage loss and load limits</li>
           <li><PointIcon kind="kwh" />Daily kWh readings for billing</li>
+          <li><PointIcon kind="live" />Water analysis</li>
         </ul>
       </div>
 

@@ -25,9 +25,12 @@
 // accumulated from every sample whether or not it was published.
 
 // A device is called offline once its heartbeat is this stale. The device
-// pushes status/lastSeen every 10s, so a minute of silence is unambiguous
-// rather than a slow cycle.
-const DEFAULT_OFFLINE_AFTER_MS = 60000;
+// pushes status/lastSeen every 10s, so even one minute of silence is
+// unambiguous - but it is also what a routine script reload or a brief
+// network blip looks like, and at 60 s every one of those was filed as
+// "stopped reporting" followed by "reporting again" a moment later. Five
+// minutes records the outages worth knowing about and not the noise.
+const DEFAULT_OFFLINE_AFTER_MS = 5 * 60000;
 
 // Spike detection, mirroring src/lib/alerts.js so the browser and the server
 // agree about what counts as one.
@@ -266,6 +269,71 @@ function evaluate({
   };
 }
 
+// A tag counts as "on minute rollups" once it has this many history rows in
+// the sweep's lookback. A one-minute tag has ~15 there; a tag that stores a
+// snapshot every 30 minutes has one or none.
+const LIVE_MIN_ROLLUPS = 3;
+// A latest/ reading older than this is not evaluated: it says nothing about
+// now, and the offline check already covers a box that has gone quiet.
+const LIVE_MAX_AGE_MS = 5 * 60000;
+
+/**
+ * Adds a window built from latest/ for tags that have NO minute rollups.
+ *
+ * WHY THIS EXISTS
+ * The engine evaluates history rows, and that is the right call for a box
+ * that writes one every minute - the row carries the minute's min and max.
+ * But a box can be configured to keep only a periodic snapshot (UMPD-MCWD
+ * stores one row per tag every 30 minutes and no rollups at all). For that
+ * device the engine saw one reading per half hour: a threshold crossed at
+ * 14:10 and cleared by 14:25 was never evaluated, and nothing was recorded.
+ *
+ * For those tags the live value is the only signal there is, so it is
+ * evaluated on every sweep instead. It is a point sample, not a min/max, so
+ * an excursion shorter than the sweep interval can still be missed - but the
+ * alternative was missing everything shorter than half an hour.
+ *
+ * A tag that DOES have minute rollups is left alone: its rollups are
+ * strictly better evidence, and mixing a live sample into the same minute
+ * would only advance the watermark past a rollup that has not landed yet.
+ *
+ * @param windows  history windows, ascending (as built by alertSweep)
+ * @param latest   devices/{id}/latest -> { tagKey: { value, ts } }
+ * @param tagKeys  tags the sweep evaluates
+ * @returns a new ascending windows array; `windows` itself is not modified
+ */
+function withLiveWindow({ windows = [], latest = {}, tagKeys = [], now = Date.now() }) {
+  const counts = {};
+  for (const w of windows) {
+    for (const k of Object.keys((w && w.byTag) || {})) counts[k] = (counts[k] || 0) + 1;
+  }
+
+  const byTag = {};
+  let newest = 0;
+  for (const k of tagKeys) {
+    if ((counts[k] || 0) >= LIVE_MIN_ROLLUPS) continue;
+    const e = latest ? latest[k] : null;
+    if (!e || !isNum(e.value) || !isNum(e.ts)) continue;
+    if (now - e.ts > LIVE_MAX_AGE_MS) continue;
+    byTag[k] = { min: e.value, avg: e.value, max: e.value, n: 1 };
+    if (e.ts > newest) newest = e.ts;
+  }
+  if (newest === 0) return windows;
+
+  const minute = Math.floor(newest / 60000) * 60000;
+  const out = windows.map((w) => ({ minute: w.minute, byTag: { ...(w.byTag || {}) } }));
+  const existing = out.find((w) => w.minute === minute);
+  if (existing) {
+    // A history row for this very minute (the snapshot itself) wins over the
+    // live sample for the same tag; the live sample fills in the rest.
+    existing.byTag = { ...byTag, ...existing.byTag };
+  } else {
+    out.push({ minute, byTag });
+    out.sort((a, b) => a.minute - b.minute);
+  }
+  return out;
+}
+
 // Deterministic id, so a re-run over the same window cannot duplicate an
 // alert. Firestore .set() on the same id overwrites with identical content
 // instead of appending a second copy - the same property the archive relies
@@ -275,4 +343,6 @@ function alertId(ev) {
   return `${ev.ts}_${tag}_${ev.kind}`;
 }
 
-module.exports = { evaluate, classify, isSpike, alertId, DEFAULT_OFFLINE_AFTER_MS };
+module.exports = {
+  evaluate, classify, isSpike, alertId, withLiveWindow, DEFAULT_OFFLINE_AFTER_MS,
+};

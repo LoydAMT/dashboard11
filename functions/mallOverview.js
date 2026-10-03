@@ -25,7 +25,9 @@
 // properly. Duplicating history into this node would multiply the very
 // traffic the projection exists to avoid.
 
-const STALE_AFTER_MS = 60000;   // matches the alert engine's offline test
+// The alert engine's own offline threshold, not a copy of it, so a tile and
+// the alert log can never disagree about whether a tenant is offline.
+const { DEFAULT_OFFLINE_AFTER_MS: STALE_AFTER_MS } = require('./alertEngine');
 
 // The range a tag has actually been seen in, from the minute rollups the
 // sweep already holds. Sent instead of the readings themselves so a mall

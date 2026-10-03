@@ -984,7 +984,13 @@ test('alertEngine: a tag with no rule never alerts, however extreme', () => {
 
 test('alertEngine: notices a box that has gone quiet, and its return', () => {
   const now = T0 + 10 * M;
-  const down = evaluate({ device: 'd', windows: [], rules: {}, status: { lastSeen: now - 5 * M }, now });
+
+  // Four minutes of silence is a reload or a blip, not an outage.
+  const blip = evaluate({ device: 'd', windows: [], rules: {}, status: { lastSeen: now - 4 * M }, now });
+  assert.equal(blip.events.length, 0, 'a short gap must not be filed as offline');
+  assert.equal(blip.state.offline, false);
+
+  const down = evaluate({ device: 'd', windows: [], rules: {}, status: { lastSeen: now - 6 * M }, now });
   assert.equal(down.events.length, 1);
   assert.equal(down.events[0].kind, 'offline');
   assert.equal(down.state.offline, true);
@@ -992,7 +998,7 @@ test('alertEngine: notices a box that has gone quiet, and its return', () => {
   // still down: must not repeat
   const still = evaluate({
     device: 'd', windows: [], rules: {},
-    prevState: down.state, status: { lastSeen: now - 6 * M }, now: now + M,
+    prevState: down.state, status: { lastSeen: now - 7 * M }, now: now + M,
   });
   assert.equal(still.events.length, 0, 'offline repeated while still offline');
 
@@ -1026,9 +1032,102 @@ test('alertEngine: classify needs a rule, and reports unknown rather than ok', (
 // on a healthy site - which is exactly what was observed after the first
 // deploy.
 
-const { isSpike } = require('./alertEngine');
+const { isSpike, withLiveWindow } = require('./alertEngine');
 
 const flat = (v, n = 12) => Array.from({ length: n }, () => v);
+
+// ---------------------------------------------------------------------------
+//  Live window: tags with no minute rollups
+// ---------------------------------------------------------------------------
+//
+// A box that stores only a 30-minute snapshot gives the engine one history
+// row per half hour. Without the live window a threshold crossed and cleared
+// between two snapshots was never evaluated, so nothing was recorded.
+
+test('withLiveWindow: a snapshot-only tag is evaluated from latest/ between snapshots', () => {
+  const rules = { pH: { lo: 6.5, hi: 8.5 } };
+  const snapAt = T0;                       // the :00 snapshot, in range
+  const now = T0 + 10 * M + 5000;          // ten minutes later, no new history row
+  const history = [win(snapAt, 'pH', { min: 7.4, avg: 7.4, max: 7.4, n: 1 })];
+
+  // Before: only the snapshot is seen, and it is fine.
+  const before = evaluate({ device: 'd', windows: history, rules, status: { lastSeen: now }, now });
+  assert.equal(before.events.length, 0);
+
+  // After: the live value, now out of range, is evaluated on this sweep.
+  const windows = withLiveWindow({
+    windows: history, latest: { pH: { value: 9.1, ts: now - 2000 } }, tagKeys: ['pH'], now,
+  });
+  const after = evaluate({ device: 'd', windows, rules, status: { lastSeen: now }, now });
+  assert.deepEqual(after.events.map((e) => e.kind), ['alarm-high']);
+  assert.equal(after.events[0].value, 9.1);
+  assert.equal(after.events[0].ts, T0 + 10 * M, 'filed under the minute of the live reading');
+});
+
+test('withLiveWindow: a tag on minute rollups is left alone', () => {
+  const history = [0, 1, 2, 3].map((i) => win(T0 + i * M, 'Current', { min: 1, avg: 2, max: 3, n: 60 }));
+  const now = T0 + 4 * M + 5000;
+  const windows = withLiveWindow({
+    windows: history, latest: { Current: { value: 99, ts: now - 1000 } }, tagKeys: ['Current'], now,
+  });
+  assert.deepEqual(windows, history, 'rollups carry min/max; the live sample must not be mixed in');
+});
+
+test('withLiveWindow: a stale latest reading is not evaluated', () => {
+  const now = T0 + 60 * M;
+  const windows = withLiveWindow({
+    windows: [], latest: { pH: { value: 9.1, ts: now - 10 * M } }, tagKeys: ['pH'], now,
+  });
+  assert.deepEqual(windows, []);
+});
+
+test('withLiveWindow: the snapshot row wins over the live sample in its own minute', () => {
+  const now = T0 + 20000;
+  const history = [win(T0, 'pH', { min: 7.4, avg: 7.4, max: 7.4, n: 1 })];
+  const windows = withLiveWindow({
+    windows: history,
+    latest: { pH: { value: 7.5, ts: now - 1000 }, Turbidity: { value: 0.12, ts: now - 1000 } },
+    tagKeys: ['pH', 'Turbidity'],
+    now,
+  });
+  assert.equal(windows.length, 1);
+  assert.equal(windows[0].byTag.pH.avg, 7.4, 'history row kept');
+  assert.equal(windows[0].byTag.Turbidity.avg, 0.12, 'tag without a row filled from latest');
+  assert.equal(history[0].byTag.Turbidity, undefined, 'input windows are not modified');
+});
+
+test('withLiveWindow: sweep after sweep fires once, then clears, with no duplicates', () => {
+  const rules = { pH: { hi: 8.5 } };
+  let state = {};
+  const kinds = [];
+  // 7.4, 9.1, 9.2 (still high), 7.6 - one sweep every two minutes.
+  [7.4, 9.1, 9.2, 7.6].forEach((value, i) => {
+    const now = T0 + i * 2 * M + 5000;
+    const windows = withLiveWindow({
+      windows: [], latest: { pH: { value, ts: now - 1000 } }, tagKeys: ['pH'], now,
+    });
+    const r = evaluate({ device: 'd', windows, rules, prevState: state, status: { lastSeen: now }, now });
+    state = r.state;
+    kinds.push(...r.events.map((e) => e.kind));
+  });
+  assert.deepEqual(kinds, ['alarm-high', 'alarm-clear']);
+});
+
+test('withLiveWindow: a steadily rising totalizer does not read as a spike', () => {
+  let state = {};
+  const kinds = [];
+  for (let i = 0; i < 40; i++) {
+    const now = T0 + i * 2 * M + 5000;
+    const windows = withLiveWindow({
+      windows: [], latest: { TotalizerA: { value: 1259000 + i * 6, ts: now - 1000 } },
+      tagKeys: ['TotalizerA'], now,
+    });
+    const r = evaluate({ device: 'd', windows, rules: {}, prevState: state, status: { lastSeen: now }, now });
+    state = r.state;
+    kinds.push(...r.events.map((e) => e.kind));
+  }
+  assert.deepEqual(kinds, []);
+});
 
 test('alertEngine: a steady tag that jumps is a spike', () => {
   assert.equal(isSpike(flat(230), 400), true);

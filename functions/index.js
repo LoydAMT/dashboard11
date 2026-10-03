@@ -13,7 +13,7 @@ const { createHandler, tupleToSampleMap } = require('./archiveRollups');
 const { createHandler: createReadHandler } = require('./readArchive');
 const { createSweep, hourOf, HOUR_MS } = require('./archiveSweep');
 const { computeProjection, toUpdates } = require('./projectCompanyAccess');
-const { evaluate: evaluateAlerts, alertId } = require('./alertEngine');
+const { evaluate: evaluateAlerts, alertId, withLiveWindow } = require('./alertEngine');
 const { buildSnapshot, phDateKey } = require('./kwhSnapshot');
 const AF = require('./archiveFormat');
 const { listDevices, overviewCompanies, companiesByDevice } = require('./deviceRegistry');
@@ -469,7 +469,16 @@ exports.alertSweep = onSchedule(
             byMinute.get(t).byTag[tagKey] = r;
           }
         }
-        const windows = [...byMinute.values()].sort((a, b) => a.minute - b.minute);
+        // A tag with no minute rollups - a box that stores only a periodic
+        // snapshot - would otherwise be evaluated once per snapshot and miss
+        // everything in between. Those tags get their live value as a
+        // window on every sweep. See withLiveWindow in alertEngine.js.
+        const windows = withLiveWindow({
+          windows: [...byMinute.values()].sort((a, b) => a.minute - b.minute),
+          latest: latestSnap.val() || {},
+          tagKeys: tagsToRead,
+          now,
+        });
 
         const { events, state } = evaluateAlerts({
           device, windows, rules, tagNames, prevState, status, now,
