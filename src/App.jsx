@@ -150,6 +150,10 @@ function Dashboard() {
   // with no thresholds, and each gauge falls back to a scale inferred from
   // recent readings. A denied read is a normal state, not an error to show.
   const alertRules = useRtdbValue(deviceId ? `alertRules/${deviceId}` : null, ready)
+  // Tags whose dial an admin has switched off (components/GaugeDisplay.jsx).
+  // Same treatment as alertRules: a missing or refused read just means every
+  // tag keeps its dial.
+  const gaugeOff = useRtdbValue(deviceId ? `gaugeOff/${deviceId}` : null, ready)
   // This meter's plan, projected from its companies (see lib/plans.js). A
   // refused or missing read is Standard, never an error on screen.
   const devicePlan = useRtdbValue(deviceId ? `devices/${deviceId}/plan` : null, ready)
@@ -211,9 +215,10 @@ function Dashboard() {
         stale,
         alarm: stale ? 'unknown' : limitState(withRule),
         ownAge,
+        gaugeOff: gaugeOff.data?.[tag.key] === true,
       }
     }),
-    [tagListAll, now, systemStale, alertRules.data],
+    [tagListAll, now, systemStale, alertRules.data, gaugeOff.data],
   )
 
   const alertCenter = useAlertCenter({

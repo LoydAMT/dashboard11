@@ -356,6 +356,24 @@
       }
     },
 
+    // Tags whose dashboard dial an admin has switched off - a totalizer, say,
+    // where a dial scaled to recent readings says nothing the number does not
+    // (components/GaugeDisplay.jsx). Only "off" is stored; a tag that is not
+    // listed keeps its dial, so nothing has to be written for the default.
+    "gaugeOff": {
+      "$deviceId": {
+        // Readable by whoever can already see the device's telemetry - the
+        // same test as alertRules/$deviceId - since it only changes how
+        // readings they can already see are drawn.
+        ".read": "auth != null && auth.token.firebase.sign_in_provider !== 'anonymous' && (root.child('devices/'+$deviceId+'/viewers/'+auth.uid).val() === true || root.child('devices/'+$deviceId+'/operators/'+auth.uid).val() === true || root.child('admins/'+auth.uid).val() === true)",
+        "$tagKey": {
+          ".write": "auth != null && root.child('admins/'+auth.uid).val() === true",
+          // Only the literal true, or the key removed (dial back on).
+          ".validate": "newData.val() === true"
+        }
+      }
+    },
+
     // The landlord's rolled-up view of a multi-device company: every tenant's
     // live values, alert state and daily meter reading in one node.
     //

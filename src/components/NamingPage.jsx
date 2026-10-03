@@ -7,6 +7,7 @@ import { useRtdbValue } from '../hooks/useRtdbValue'
 import { useIsAdmin } from '../hooks/useIsAdmin'
 import { AlertThresholds } from './AlertThresholds'
 import { MallDisplay } from './MallDisplay'
+import { GaugeDisplay } from './GaugeDisplay'
 import { CompanyPlans } from './CompanyPlans'
 import { SignIn } from './SignIn'
 
@@ -136,6 +137,10 @@ function DeviceAdminCard({ deviceId, mayRename }) {
     <section className="admin-card">
       <NamingRow deviceId={deviceId} mayRename={mayRename} />
       <AlertThresholds deviceId={deviceId} />
+      <div className="admin-sub">
+        <h4>Dials</h4>
+        <GaugeDisplay deviceId={deviceId} />
+      </div>
       <div className="admin-sub">
         <h4>Mall page</h4>
         <MallDisplay deviceId={deviceId} />

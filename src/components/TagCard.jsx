@@ -32,8 +32,10 @@ export function TagCard({ tag, stale, shown, color, blocked, maxSeries, onSelect
   // a tag with neither thresholds nor enough history to infer a scale from
   // has none either - an accumulator like kWh read once a day lands here and
   // correctly keeps the plain readout. gaugeScale returns null in that case
-  // rather than inventing an axis.
-  const gauge = tag.dataType === 'bool' ? null : gaugeScale({
+  // rather than inventing an axis. An admin can also switch a tag's dial off
+  // outright (gaugeOff, set on the /naming page) - a totalizer, say, where
+  // the number is the whole story.
+  const gauge = tag.dataType === 'bool' || tag.gaugeOff ? null : gaugeScale({
     value: typeof tag.value === 'number' ? tag.value : null,
     lo: tag.loLimit,
     hi: tag.hiLimit,
@@ -133,7 +135,10 @@ export function TagCard({ tag, stale, shown, color, blocked, maxSeries, onSelect
           person actually set - an inferred scale has no number worth
           printing, because it is a description of recent behaviour rather
           than a level anyone chose. */}
-      {gauge && !gauge.inferred && (
+      {/* With the dial switched off there are no zones to read the levels
+          from, so a configured threshold is printed whenever one exists. */}
+      {((gauge && !gauge.inferred) ||
+        (tag.gaugeOff && (tag.loLimit != null || tag.hiLimit != null))) && (
         <div className="card-limits">
           {tag.loLimit != null ? `${tag.loLimit} low` : ''}
           {tag.loLimit != null && tag.hiLimit != null ? ' · ' : ''}

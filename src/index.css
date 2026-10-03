@@ -2776,6 +2776,17 @@ body {
   font-weight: 600;
 }
 .malldisp-check { width: 9px; display: inline-block; }
+
+/* Per-tag dial on/off, admin page. */
+.gaugedisp-rows { display: grid; gap: 6px; margin-top: 6px; }
+.gaugedisp-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  font-size: .82rem;
+}
+.gaugedisp-name { min-width: 0; overflow-wrap: anywhere; }
 .malldisp-unit { color: var(--text-faint); font-weight: 400; }
 
 .mall-recent-head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
