@@ -36,8 +36,19 @@ export function buildTable({ byKey, tags, range, nowMs }) {
 
   const columns = [{ id: 't', label: 'Time', kind: 'time' }]
   const groups = []
+  // Tags whose every row in the window is one reading, not an aggregate.
+  const singleSample = new Set()
 
   for (const tag of tags) {
+    // A device that stores a periodic snapshot (one reading per row, n = 1)
+    // rather than a minute rollup has min = mean = max on every row. Three
+    // identical columns per tag say nothing a single one does not, and on an
+    // eleven-tag device they triple the table's width for no information.
+    // Judged on the rows actually in this window, so a tag that does have
+    // real aggregates keeps all three.
+    const single = !raw && isSingleSample(byKey[tag.key] || [], cutoff)
+    if (single) singleSample.add(tag.key)
+
     // A mean of a boolean is 0.5 as often as not, and min/max of one is just
     // "did it ever change". One state column says more than three numbers.
     // `now` is appended to the rollup shapes: it is not an aggregate of the
@@ -47,13 +58,15 @@ export function buildTable({ byKey, tags, range, nowMs }) {
       ? ['value']
       : tag.dataType === 'bool' || tag.dataType === 'text'
         ? ['avg', 'now']
-        : ['min', 'avg', 'max', 'now']
+        : single
+          ? ['value', 'now']
+          : ['min', 'avg', 'max', 'now']
     const unit = displayUnit(tag)
 
     for (const field of fields) {
       columns.push({
         id: `${tag.key}:${field}`,
-        label: raw ? tag.name : `${tag.name} ${FIELD_LABEL[field]}`,
+        label: field === 'value' ? tag.name : `${tag.name} ${FIELD_LABEL[field]}`,
         short: FIELD_LABEL[field],
         unit,
         field,
@@ -83,10 +96,10 @@ export function buildTable({ byKey, tags, range, nowMs }) {
         byTime.set(r.t, cells)
       }
 
-      if (raw) {
-        // A raw row already has min = avg = max = the one reading it was
-        // built from (see useSeriesHistory) - avg is that reading, nothing
-        // aggregated about it.
+      if (raw || singleSample.has(tag.key)) {
+        // A raw row - or a snapshot - already has min = avg = max = the one
+        // reading it was built from (see useSeriesHistory); avg is that
+        // reading, nothing aggregated about it.
         cells[`${tag.key}:value`] = r.avg
       } else {
         // A rollup missing its envelope still has a mean; the mean stands in
@@ -110,6 +123,26 @@ export function buildTable({ byKey, tags, range, nowMs }) {
 
 const numOr = (v, fallback) =>
   (typeof v === 'number' && Number.isFinite(v) ? v : fallback)
+
+// True when there is at least one row in the window and every one of them is
+// a single reading: n of 1 AND min = mean = max.
+//
+// Both, not n alone. useSeriesHistory defaults a missing n to 1, and archived
+// rollups can come back without one (functions/archiveFormat.js) - on n alone,
+// a real one-minute rollup tag viewed over an archived range would lose its
+// min and max columns. Requiring the three values to agree means collapsing
+// can never hide a number that differs: if any row carries a real envelope,
+// the tag keeps all of min/mean/max.
+function isSingleSample(rows, cutoff) {
+  let any = false
+  for (const r of rows) {
+    if (r.t < cutoff || !Number.isFinite(r.avg)) continue
+    if (typeof r.n === 'number' && r.n > 1) return false
+    if (numOr(r.min, r.avg) !== r.avg || numOr(r.max, r.avg) !== r.avg) return false
+    any = true
+  }
+  return any
+}
 
 /** Header text for an exported column, unit included since there is no sub-row. */
 export function exportHeader(column) {

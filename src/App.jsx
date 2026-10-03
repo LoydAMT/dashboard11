@@ -286,6 +286,12 @@ function Dashboard() {
     setPickedKeys(next.length ? next : [CLEARED])
   }
 
+  // The table is not bound by the chart's cap. MAX_SERIES exists because a
+  // fifth overlaid line is unreadable; a fifth column is just a column, and
+  // a table that silently leaves out most of a device's readings is the
+  // wrong answer to "show me what was recorded".
+  const tableView = view === 'table'
+
   const single = visibleTags.length === 1 ? visibleTags[0] : null
 
   // kWh is always fetched raw regardless of the selected range (see
@@ -301,16 +307,19 @@ function Dashboard() {
   const indexedNow = indexed && visibleTags.length > 1
 
   // History is fetched per shown trend, and only for shown trends: hiding one
-  // drops its listener. The billed bandwidth scales with what is on screen.
+  // drops its listener. The billed bandwidth scales with what is on screen -
+  // which, while the table is open, is every tag; switching back to the chart
+  // drops the extra listeners again.
   // Tags, not bare keys — each one's own intervalMs decides whether its
   // history is read as minute rollups or as raw samples (see
   // useSeriesHistory), and a bare key has no interval to make that call with.
   //
   // Waits for the plan, which decides whether the archive is asked at all:
   // starting without it would build every subscription twice on load.
+  const historyTags = tableView ? tagList : visibleTags
   const history = useSeriesHistory(
-    visibleTags, range, deviceId,
-    ready && !devicePlan.loading && visibleKeys.length > 0,
+    historyTags, range, deviceId,
+    ready && !devicePlan.loading && historyTags.length > 0,
     premium,
   )
 
@@ -332,15 +341,15 @@ function Dashboard() {
   // across four tags is not work to do on every tick of a chart nobody is
   // looking away from.
   const table = useMemo(
-    () => (view === 'table'
+    () => (tableView
       ? buildTable({
           byKey: history.byKey,
-          tags: visibleTags,
+          tags: tagList,
           range,
           nowMs: coarseNow,
         })
       : EMPTY_TABLE),
-    [view, history.byKey, visibleTags, range, coarseNow],
+    [tableView, history.byKey, tagList, range, coarseNow],
   )
 
   // Found by its actual RTDB key, not by display name - a tag can be
@@ -528,18 +537,23 @@ function Dashboard() {
             <div className="panel-head">
               <div>
                 <div className="panel-title">
-                  {single ? single.name : `${visibleTags.length} trends`}
+                  {tableView
+                    ? `All ${tagList.length} ${tagList.length === 1 ? 'tag' : 'tags'}`
+                    : single ? single.name : `${visibleTags.length} trends`}
                 </div>
                 <div className="panel-sub">
-                  {effectiveRawView
-                    ? (view === 'table'
+                  {/* The table's copy keys off the range alone: it holds every
+                      tag, so the chart's single-kWh raw override says nothing
+                      about it. */}
+                  {tableView
+                    ? (rawView
                         ? 'Every raw reading in the window, newest first — unaggregated'
-                        : single
+                        : 'Every recorded row in the window, newest first')
+                    : effectiveRawView
+                      ? (single
                           ? (single.description || 'Raw readings, unaggregated')
                           : 'Raw readings, unaggregated · tap a card or a legend entry to add or remove a trend')
-                    : (view === 'table'
-                        ? 'Every one-minute rollup in the window, newest first'
-                        : single
+                      : (single
                           ? (single.description ||
                              (single.unit ? `Unit: ${single.unit}` : 'One-minute rollups'))
                           : 'One-minute rollups · tap a card or a legend entry to add or remove a trend')}
@@ -601,7 +615,9 @@ function Dashboard() {
             {/* Summary figures are for a single measurement. Across an overlay
                 they would need a column each, and the mean of a boolean is 0.5 as
                 often as not, which formatValue would render as ON. */}
-            {singleStats && single.dataType !== 'bool' && single.dataType !== 'text' && (
+            {/* Chart only: over the all-tags table, one tag's summary would read
+                as if it described the whole grid. */}
+            {!tableView && singleStats && single.dataType !== 'bool' && single.dataType !== 'text' && (
               <dl className="stats" aria-label={`${single.name} over the last ${range.label}`}>
                 <Stat label="min" tag={single} value={singleStats.min} />
                 <Stat label="mean" tag={single} value={singleStats.avg} />
@@ -610,7 +626,7 @@ function Dashboard() {
               </dl>
             )}
   
-            {view === 'table' ? (
+            {tableView ? (
               <DataTable
                 columns={table.columns}
                 groups={table.groups}
@@ -638,14 +654,19 @@ function Dashboard() {
               </Suspense>
             )}
   
-            <ChartLegend
-              tags={tagList}
-              visible={visibleKeys}
-              colors={colors}
-              onToggle={toggleTag}
-              atCapacity={atCapacity}
-              maxSeries={MAX_SERIES}
-            />
+            {/* The legend picks the chart's trends. The table already shows
+                every tag, so there it would only grey out columns that are
+                plainly on screen. */}
+            {!tableView && (
+              <ChartLegend
+                tags={tagList}
+                visible={visibleKeys}
+                colors={colors}
+                onToggle={toggleTag}
+                atCapacity={atCapacity}
+                maxSeries={MAX_SERIES}
+              />
+            )}
           </section>
         )}
 
@@ -655,7 +676,7 @@ function Dashboard() {
           Values are one-minute rollups from {deviceName}; timestamps shown in your
           local time. Staleness threshold {Math.round(thresholdMs / 1000)}s, derived
           from an observed publish interval of {formatInterval(periodMs)}.
-          {' '}History is loaded only for the trends on the chart, up to {MAX_SERIES} at once.
+          {' '}The chart overlays up to {MAX_SERIES} trends at once; the table shows every tag.
         </footer>
         </>
       )}
