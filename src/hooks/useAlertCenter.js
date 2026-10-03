@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { loadLog, saveLog, makeAlert, isSpike } from '../lib/alerts'
+import { loadLog, saveLog, makeAlert, isSpike, spikeFloorFor } from '../lib/alerts'
 
 const TOAST_LIFE_MS = { critical: 15000, warning: 10000, info: 6000 }
 const SPIKE_WINDOW = 24
@@ -143,7 +143,8 @@ export function useAlertCenter({ deviceId, tags, connectionLevel, enabled }) {
           // test's window, and widening that window would quietly make
           // spikes harder to trigger.
           const spikeBuf = buf.slice(-SPIKE_WINDOW)
-          if (!tag.stale && tag.alarm !== 'high' && tag.alarm !== 'low' && isSpike(spikeBuf, tag.value)) {
+          if (!tag.stale && tag.alarm !== 'high' && tag.alarm !== 'low'
+              && isSpike(spikeBuf, tag.value, spikeFloorFor(tag))) {
             record(makeAlert({
               kind: 'spike',
               level: 'warning',

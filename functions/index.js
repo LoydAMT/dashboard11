@@ -13,7 +13,37 @@ const { createHandler, tupleToSampleMap } = require('./archiveRollups');
 const { createHandler: createReadHandler } = require('./readArchive');
 const { createSweep, hourOf, HOUR_MS } = require('./archiveSweep');
 const { computeProjection, toUpdates } = require('./projectCompanyAccess');
-const { evaluate: evaluateAlerts, alertId, withLiveWindow } = require('./alertEngine');
+const {
+  evaluate: evaluateAlerts, alertId, withLiveWindow,
+  alertWindowTags, parseAlertWindows, spikeFloorsFromTags,
+} = require('./alertEngine');
+
+const { thresholdStep, createAccumulator, triggerName } = require('./liveAlerts');
+
+// Most minute summaries one sweep will take from alertWindows/{device}. A
+// healthy box has two waiting; this only bites after an outage, where it
+// turns a backlog into a few bounded reads.
+const ALERT_WINDOWS_PER_SWEEP = 120;
+
+// Devices whose THRESHOLD alerts are raised the moment a reading is
+// published, by a database trigger on their latest/ node, instead of by the
+// two-minute sweep. See liveAlerts.js for the why.
+//
+// A list, not "every device", because each one costs a function invocation
+// per published reading - roughly 100 a minute for an eleven-tag box, which
+// is fine for a real plant and pointless for the simulated demo boxes. Add a
+// device id here and redeploy to switch it over; the sweep stops evaluating
+// its thresholds automatically (it reads this same list).
+const LIVE_ALERT_DEVICES = ['UMPD-MCWD'];
+
+// How long the trigger trusts its in-memory copy of a device's thresholds.
+// This is the delay before an edit on the admin page takes effect on the
+// instant path. Two minutes keeps it to one small read per two minutes
+// instead of one per reading.
+const LIVE_RULES_TTL_MS = 2 * 60000;
+// Tag names and company ownership change rarely; an hour is plenty.
+const LIVE_META_TTL_MS = 60 * 60000;
+const LIVE_LOG_EVERY_MS = 10 * 60000;
 const { buildSnapshot, phDateKey } = require('./kwhSnapshot');
 const AF = require('./archiveFormat');
 const { listDevices, overviewCompanies, companiesByDevice } = require('./deviceRegistry');
@@ -389,6 +419,160 @@ exports.projectCompanyMembers = onValueWritten(
 );
 
 // ---------------------------------------------------------------------------
+//  Instant threshold alerts
+// ---------------------------------------------------------------------------
+//
+// One trigger per device in LIVE_ALERT_DEVICES, on that device's own
+// latest/{tagKey}. The path is literal on purpose: a wildcard device would
+// fire for every box in the fleet, including the simulated ones.
+//
+// PER TAG, not on latest/ as a whole: the event then carries one tag's
+// { value, ts } rather than the whole node before and after, which keeps
+// what the database hands this function as small as it can be.
+//
+// NOTHING IS READ PER READING. Rules, tag names and the current alarm state
+// are held in memory (maxInstances 1, so there is exactly one copy) and
+// refreshed on a timer; Firestore is written only when a threshold is
+// actually crossed and once a minute for the summary. An ordinary reading
+// does no I/O at all.
+
+const liveCtx = new Map();   // device -> in-memory context, for this instance
+
+async function ensureLive(device, now) {
+  let c = liveCtx.get(device);
+  if (!c) {
+    c = {
+      tags: {}, rules: {}, rulesAt: 0, rulesBusy: null,
+      tagNames: {}, boxWindows: false, owning: [], metaAt: 0, metaBusy: null,
+      lastTs: {}, acc: createAccumulator(), seen: 0, logAt: now, announced: false,
+    };
+    liveCtx.set(device, c);
+    // Alarm state survives a restart of this instance: without it, a tag
+    // already past its threshold would be announced again on every deploy.
+    c.stateReady = getFirestore().collection('alertLive').doc(device).get()
+      .then((d) => { c.tags = (d.exists && d.data().tags) || {}; })
+      .catch((err) => console.error(`liveAlerts: ${device} state unreadable`, err));
+  }
+  await c.stateReady;
+
+  if (now - c.rulesAt > LIVE_RULES_TTL_MS && !c.rulesBusy) {
+    c.rulesBusy = getDatabase().ref(`alertRules/${device}`).once('value')
+      .then((s) => { c.rules = s.val() || {}; c.rulesAt = Date.now(); })
+      .catch((err) => console.error(`liveAlerts: ${device} rules unreadable`, err))
+      .finally(() => { c.rulesBusy = null; });
+  }
+  if (now - c.metaAt > LIVE_META_TTL_MS && !c.metaBusy) {
+    c.metaBusy = Promise.all([
+      getDatabase().ref(`devices/${device}/tags`).once('value'),
+      getDatabase().ref('companies').once('value'),
+    ]).then(([tagsSnap, companiesSnap]) => {
+      const meta = tagsSnap.val() || {};
+      c.tagNames = {};
+      for (const [k, m] of Object.entries(meta)) c.tagNames[k] = (m && m.name) || k;
+      // A box that sends its own minute summaries makes ours redundant.
+      c.boxWindows = alertWindowTags(meta).length > 0;
+      c.owning = companiesByDevice(companiesSnap.val() || {})[device] || [];
+      c.metaAt = Date.now();
+    }).catch((err) => console.error(`liveAlerts: ${device} metadata unreadable`, err))
+      .finally(() => { c.metaBusy = null; });
+  }
+  // The first load is waited for - evaluating against no rules would miss a
+  // crossing. Later refreshes run in the background on the old copy.
+  if (c.rulesAt === 0 && c.rulesBusy) await c.rulesBusy;
+  if (c.metaAt === 0 && c.metaBusy) await c.metaBusy;
+  return c;
+}
+
+function liveAlertHandler(device) {
+  return async (event) => {
+    const after = event.data.after.val();
+    if (!after || typeof after.value !== 'number' || !Number.isFinite(after.value)) return;
+    const tagKey = event.params.tagKey;
+    const now = Date.now();
+    const ts = (typeof after.ts === 'number' && Number.isFinite(after.ts)) ? after.ts : now;
+
+    const c = await ensureLive(device, now);
+
+    if (!c.announced) {
+      c.announced = true;
+      console.log(`liveAlerts: ${device} ready - ${Object.keys(c.rules).length} rule(s), ` +
+        `state ${JSON.stringify(c.tags)}`);
+    }
+
+    // Database events are delivered at least once and not strictly in order.
+    // A reading older than one already handled for this tag is dropped, so a
+    // late duplicate can never undo a newer state.
+    if (c.lastTs[tagKey] != null && ts < c.lastTs[tagKey]) return;
+    c.lastTs[tagKey] = ts;
+    c.seen += 1;
+
+    const fs = getFirestore();
+    const writes = [];
+
+    const prev = c.tags[tagKey] || 'ok';
+    const { next, event: ev } = thresholdStep({
+      device, tagKey, tagName: c.tagNames[tagKey], prev, value: after.value, ts, rule: c.rules[tagKey],
+    });
+
+    if (next !== prev) {
+      // Set BEFORE any await: a second reading for this tag arriving while
+      // the alert is being written must see the new state, or it would
+      // raise the same crossing again.
+      c.tags[tagKey] = next;
+      const patch = { tags: { [tagKey]: next } };
+      if (ev) {
+        writes.push(
+          fs.collection('devices').doc(device).collection('alerts').doc(alertId(ev)).set({
+            ...ev, companies: c.owning, recordedAt: FieldValue.serverTimestamp(),
+          }),
+        );
+        patch.lastAlert = { ts: ev.ts, kind: ev.kind, level: ev.level || 'info', message: ev.message };
+        console.log(`liveAlerts: ${device} -> ${ev.kind} ${tagKey} = ${after.value}`);
+      }
+      writes.push(fs.collection('alertLive').doc(device).set(patch, { merge: true }));
+    }
+
+    // Minute summaries for the sweep's spike detection, unless the box
+    // already sends its own.
+    if (!c.boxWindows) {
+      for (const w of c.acc.add(tagKey, after.value, ts)) {
+        writes.push(
+          fs.collection('alertLive').doc(device).collection('windows').doc(String(w.minute))
+            .set({ t: w.minute, tags: w.tags }, { merge: true }),
+        );
+      }
+    }
+
+    if (now - c.logAt >= LIVE_LOG_EVERY_MS) {
+      console.log(`liveAlerts: ${device} ${c.seen} reading(s) in the last ` +
+        `${Math.round((now - c.logAt) / 60000)} min, in alarm: ` +
+        `${Object.entries(c.tags).filter(([, s]) => s !== 'ok').map(([k, s]) => `${k}=${s}`).join(', ') || 'none'}`);
+      c.seen = 0;
+      c.logAt = now;
+    }
+
+    if (writes.length === 0) return;
+    try {
+      await Promise.all(writes);
+    } catch (err) {
+      // The alert did not land. Put the state back so the next reading - at
+      // most ten seconds away - raises it again, rather than the crossing
+      // being remembered as reported when it was not.
+      if (next !== prev) c.tags[tagKey] = prev;
+      console.error(`liveAlerts: ${device} write failed for ${tagKey}`, err);
+      throw err;
+    }
+  };
+}
+
+for (const device of LIVE_ALERT_DEVICES) {
+  exports[triggerName(device)] = onValueWritten(
+    { ...TRIGGER_OPTS, ref: `/devices/${device}/latest/{tagKey}` },
+    liveAlertHandler(device),
+  );
+}
+
+// ---------------------------------------------------------------------------
 //  Alerts
 // ---------------------------------------------------------------------------
 
@@ -427,7 +611,13 @@ exports.alertSweep = onSchedule(
 
     for (const device of sweepDevices) {
       try {
-        const [rulesSnap, tagsSnap, statusSnap, stateDoc, latestSnap, nameSnap] =
+        // A device on the instant path (see LIVE_ALERT_DEVICES) has its
+        // thresholds evaluated by its trigger the moment a reading lands.
+        // This sweep then keeps only what it is still the right tool for -
+        // spikes and offline - and must not evaluate thresholds as well.
+        const live = LIVE_ALERT_DEVICES.includes(device);
+
+        const [rulesSnap, tagsSnap, statusSnap, stateDoc, latestSnap, nameSnap, liveDoc] =
           await Promise.all([
             rtdb.ref(`alertRules/${device}`).once('value'),
             rtdb.ref(`devices/${device}/tags`).once('value'),
@@ -437,51 +627,86 @@ exports.alertSweep = onSchedule(
             // this line was already being fetched to evaluate alerts.
             rtdb.ref(`devices/${device}/latest`).once('value'),
             rtdb.ref(`naming/${device}`).once('value'),
+            live ? fs.collection('alertLive').doc(device).get() : null,
           ]);
 
         const rules = rulesSnap.val() || {};
         const tagsMeta = tagsSnap.val() || {};
         const status = statusSnap.val() || {};
         const prevState = stateDoc.exists ? (stateDoc.data() || {}) : {};
+        const liveData = (liveDoc && liveDoc.exists && liveDoc.data()) || {};
 
         const tagNames = {};
         for (const [k, m] of Object.entries(tagsMeta)) tagNames[k] = (m && m.name) || k;
 
-        // EVERY tag with history, not only those with a configured limit.
-        // Spike detection needs a baseline for each tag, and limits are the
-        // exception rather than the rule here - reading only ruled tags left
-        // the log empty on a healthy site, which is what was observed after
-        // the first deploy. A tag with no minute rollups (an accumulator, or
-        // a live-only tag) simply returns nothing.
-        const historyTags = Object.entries(tagsMeta)
-          .filter(([, m]) => !m || m.history !== false)
-          .map(([k]) => k);
-        const tagsToRead = [...new Set([...historyTags, ...Object.keys(rules)])];
+        let windows;
+        // Minute keys read from alertWindows/, so exactly those - and nothing
+        // the box wrote in the meantime - are deleted once they are processed.
+        let alertWindowKeys = null;
+        // Likewise the Firestore summaries the live trigger built.
+        let liveWindowRefs = null;
 
-        const byMinute = new Map();
-        for (const tagKey of tagsToRead) {
-          const snap = await rtdb.ref(`devices/${device}/history/${tagKey}`)
-            .orderByKey().startAt(String(since)).endAt('9999999999999').once('value');
-          for (const [minute, r] of Object.entries(snap.val() || {})) {
-            const t = Number(minute);
-            if (!Number.isFinite(t) || !r || typeof r !== 'object') continue;
-            if (!byMinute.has(t)) byMinute.set(t, { minute: t, byTag: {} });
-            byMinute.get(t).byTag[tagKey] = r;
+        if (alertWindowTags(tagsMeta).length === 0 && live) {
+          // The trigger summarises each minute from the readings it sees and
+          // leaves it in Firestore. Reading those costs no database download
+          // at all, and replaces the history query per tag below.
+          const snap = await fs.collection('alertLive').doc(device).collection('windows')
+            .orderBy('t').limit(ALERT_WINDOWS_PER_SWEEP).get();
+          liveWindowRefs = snap.docs.map((d) => d.ref);
+          const node = {};
+          for (const d of snap.docs) node[String(d.data().t)] = d.data().tags;
+          windows = parseAlertWindows(node);
+        } else if (alertWindowTags(tagsMeta).length > 0) {
+          // This box sends each minute's min/mean/max for alerting, to a node
+          // nothing else reads. ONE small read replaces a history query per
+          // tag, and it is the only source for this device - see
+          // alertWindowTags in alertEngine.js for why sources are not mixed.
+          // Oldest first and bounded, so a backlog after a long outage is
+          // worked through over a few sweeps instead of in one huge read.
+          const snap = await rtdb.ref(`alertWindows/${device}`)
+            .orderByKey().limitToFirst(ALERT_WINDOWS_PER_SWEEP).once('value');
+          const node = snap.val() || {};
+          alertWindowKeys = Object.keys(node);
+          windows = parseAlertWindows(node);
+        } else {
+          // EVERY tag with history, not only those with a configured limit.
+          // Spike detection needs a baseline for each tag, and limits are the
+          // exception rather than the rule here - reading only ruled tags left
+          // the log empty on a healthy site, which is what was observed after
+          // the first deploy. A tag with no minute rollups (an accumulator, or
+          // a live-only tag) simply returns nothing.
+          const historyTags = Object.entries(tagsMeta)
+            .filter(([, m]) => !m || m.history !== false)
+            .map(([k]) => k);
+          const tagsToRead = [...new Set([...historyTags, ...Object.keys(rules)])];
+
+          const byMinute = new Map();
+          for (const tagKey of tagsToRead) {
+            const snap = await rtdb.ref(`devices/${device}/history/${tagKey}`)
+              .orderByKey().startAt(String(since)).endAt('9999999999999').once('value');
+            for (const [minute, r] of Object.entries(snap.val() || {})) {
+              const t = Number(minute);
+              if (!Number.isFinite(t) || !r || typeof r !== 'object') continue;
+              if (!byMinute.has(t)) byMinute.set(t, { minute: t, byTag: {} });
+              byMinute.get(t).byTag[tagKey] = r;
+            }
           }
+          // A tag with no minute rollups and no alert summaries either would
+          // otherwise be evaluated once per stored snapshot and miss
+          // everything in between. Those tags get their live value as a
+          // window on every sweep. See withLiveWindow in alertEngine.js.
+          windows = withLiveWindow({
+            windows: [...byMinute.values()].sort((a, b) => a.minute - b.minute),
+            latest: latestSnap.val() || {},
+            tagKeys: tagsToRead,
+            now,
+          });
         }
-        // A tag with no minute rollups - a box that stores only a periodic
-        // snapshot - would otherwise be evaluated once per snapshot and miss
-        // everything in between. Those tags get their live value as a
-        // window on every sweep. See withLiveWindow in alertEngine.js.
-        const windows = withLiveWindow({
-          windows: [...byMinute.values()].sort((a, b) => a.minute - b.minute),
-          latest: latestSnap.val() || {},
-          tagKeys: tagsToRead,
-          now,
-        });
 
         const { events, state } = evaluateAlerts({
           device, windows, rules, tagNames, prevState, status, now,
+          spikeFloors: spikeFloorsFromTags(tagsMeta),
+          thresholds: !live,
         });
 
         if (events.length > 0) {
@@ -515,15 +740,33 @@ exports.alertSweep = onSchedule(
         // than losing the events entirely.
         await fs.collection('alertState').doc(device).set(state, { merge: true });
 
+        // The summaries have done their job: any alert they produced is in
+        // Firestore and the watermark is saved. Deleting them is what keeps
+        // this node at a couple of minutes' worth instead of growing for
+        // ever. Done last, so a failure anywhere above leaves them in place
+        // to be re-read - and the deterministic alert ids make that re-run
+        // harmless.
+        if (alertWindowKeys && alertWindowKeys.length > 0) {
+          const done = {};
+          for (const k of alertWindowKeys) done[k] = null;
+          await rtdb.ref(`alertWindows/${device}`).update(done);
+        }
+        if (liveWindowRefs && liveWindowRefs.length > 0) {
+          const batch = fs.batch();
+          for (const ref of liveWindowRefs) batch.delete(ref);
+          await batch.commit();
+        }
+
         // Landlord view. Uses the state the engine just computed, so the
         // overview and the alert log can never disagree about whether a
-        // tenant is in alarm.
+        // tenant is in alarm. For a device on the instant path that state is
+        // the trigger's, since the trigger is what owns its thresholds.
         rows[device] = tenantRow({
           deviceId: device,
           name: nameSnap.val(),
           latest: latestSnap.val(),
           status,
-          tagState: state.tags || {},
+          tagState: (live ? liveData.tags : state.tags) || {},
           offline: state.offline,
           // Both already in hand from the alert evaluation above, so each
           // tenant's dial arrives knowing its own zones and its own scale.
@@ -552,6 +795,13 @@ exports.alertSweep = onSchedule(
             level: last.level || 'info',
             message: last.message,
           };
+        }
+        // A threshold alert raised by the live trigger never passes through
+        // `events` above, so the trigger leaves its latest one on its own
+        // document and it is picked up here when it is the newer of the two.
+        if (live && liveData.lastAlert
+            && (!rows[device].lastAlert || liveData.lastAlert.ts > rows[device].lastAlert.ts)) {
+          rows[device].lastAlert = liveData.lastAlert;
         }
 
         if (events.length > 0) {

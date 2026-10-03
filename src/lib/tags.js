@@ -77,6 +77,10 @@ export function buildTag(key, latest, meta) {
     // or unconfigured tag, in which case callers fall back to their own
     // default rather than treat a missing field as "instant".
     intervalMs: numOrNull(meta?.intervalMs),
+    // The smallest change the box bothers to publish for this tag, in the
+    // tag's own units. Spike detection uses it as a noise floor (see
+    // lib/alerts.js). Absent on a box that does not publish one.
+    deadband: numOrNull(meta?.deadband),
   }
 }
 

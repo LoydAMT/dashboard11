@@ -58,6 +58,16 @@ const SPIKE_MIN_SAMPLES = 8;
 const SPIKE_Z_THRESHOLD = 4;
 const SPIKE_MIN_DELTA_FRACTION = 0.02;
 const SPIKE_BUFFER_LEN = 30;
+// A tag can publish its own noise floor (tags/{key}/deadband - the smallest
+// change the box considers worth reporting). A move smaller than this many
+// of those steps is not a spike, whatever the statistics say. Mirrors
+// SPIKE_DEADBAND_STEPS in src/lib/alerts.js.
+//
+// Needed because a quiet tag has a perfectly flat baseline: Free Chlorine
+// sitting at 0.42 ppm for ten minutes has sd = 0, so the very next step to
+// 0.44 was "infinitely many deviations out" and 4.7% off the mean - a spike
+// by every test above, and in reality one tick of the sensor.
+const SPIKE_DEADBAND_STEPS = 3;
 
 /**
  * Is `value` a spike against `buffer` (minute averages, oldest first)?
@@ -66,14 +76,18 @@ const SPIKE_BUFFER_LEN = 30;
  * constantly on ordinary process noise. MIN_DELTA_FRACTION is the fallback
  * for a near-constant tag, where sd approaches zero and a z-score alone
  * would call a one-part-in-a-thousand wobble infinitely many deviations out.
+ *
+ * `minDelta` is an absolute floor in the tag's own units (see
+ * SPIKE_DEADBAND_STEPS); 0 means none.
  */
-function isSpike(buffer, value) {
+function isSpike(buffer, value, minDelta = 0) {
   if (!Array.isArray(buffer) || buffer.length < SPIKE_MIN_SAMPLES) return false;
   if (!isNum(value)) return false;
   const mean = buffer.reduce((a, b) => a + b, 0) / buffer.length;
   const variance = buffer.reduce((a, b) => a + (b - mean) ** 2, 0) / buffer.length;
   const sd = Math.sqrt(variance);
   const delta = Math.abs(value - mean);
+  if (isNum(minDelta) && minDelta > 0 && delta < minDelta) return false;
   if (delta < Math.abs(mean) * SPIKE_MIN_DELTA_FRACTION) return false;
   if (sd === 0) return delta > 0;
   return delta / sd >= SPIKE_Z_THRESHOLD;
@@ -106,6 +120,13 @@ function classify(rollup, rule) {
  * @param prevState   { tags: { tagKey: 'ok'|'high'|'low' }, offline: bool, lastMinute }
  * @param status      { lastSeen }
  * @param now         epoch ms
+ * @param spikeFloors { tagKey: smallest move that may count as a spike }
+ * @param thresholds  false = record no threshold events and leave threshold
+ *                    state untouched. For a device whose thresholds are
+ *                    evaluated instantly by the live trigger (liveAlerts.js):
+ *                    two evaluators would each record the same crossing.
+ *                    `rules` is still used, to keep a spike from being filed
+ *                    for the same minute as a threshold crossing.
  *
  * Returns { events, state }. Events are TRANSITIONS only - a tag that stays
  * past its threshold for an hour produces one alert, not sixty. A log that
@@ -120,6 +141,8 @@ function evaluate({
   status = {},
   now = Date.now(),
   offlineAfterMs = DEFAULT_OFFLINE_AFTER_MS,
+  spikeFloors = {},
+  thresholds = true,
 }) {
   const events = [];
   const tagState = { ...(prevState.tags || {}) };
@@ -171,8 +194,9 @@ function evaluate({
         // anything unusual. The alert log filled with "jumped well outside
         // its recent range" for every device on every sweep, which is worse
         // than no spike detection - it buries the alerts that matter.
-        const spikeHigh = isSpike(buf.hi, hi);
-        const spikeLow = isSpike(buf.lo, lo);
+        const floor = spikeFloors[tagKey] || 0;
+        const spikeHigh = isSpike(buf.hi, hi, floor);
+        const spikeLow = isSpike(buf.lo, lo, floor);
         if (spikeHigh || spikeLow) {
           const value = spikeHigh ? hi : lo;
           events.push({
@@ -194,7 +218,7 @@ function evaluate({
       };
     }
 
-    for (const [tagKey, rule] of Object.entries(rules)) {
+    for (const [tagKey, rule] of Object.entries(thresholds ? rules : {})) {
       const rollup = (w.byTag || {})[tagKey];
       const next = classify(rollup, rule);
       if (next === 'none' || next === 'unknown') continue;
@@ -334,6 +358,72 @@ function withLiveWindow({ windows = [], latest = {}, tagKeys = [], now = Date.no
   return out;
 }
 
+/**
+ * Tags that publish a per-minute alert summary (tags/{key}/minuteAlerts).
+ *
+ * A box that keeps no minute history can still send each minute's min, mean
+ * and max to alertWindows/{device}/{minute} purely for alerting - see
+ * parseAlertWindows. When ANY tag on a device carries the flag, the whole
+ * device is evaluated from those summaries and from nothing else: no history
+ * rows and no live window. Mixing sources on one device would let a live
+ * sample for the current, unfinished minute advance the watermark past the
+ * summary for that same minute, which arrives a minute later and would then
+ * be skipped as already seen.
+ */
+function alertWindowTags(tagsMeta = {}) {
+  return Object.entries(tagsMeta || {})
+    .filter(([, m]) => m && m.minuteAlerts === true)
+    .map(([k]) => k);
+}
+
+/**
+ * alertWindows/{device} -> ascending windows for evaluate().
+ *
+ * WHY THIS NODE EXISTS
+ * The engine wants a minute's min and max, so a two-second excursion is
+ * caught. A box that stores only a 30-minute snapshot has no such rows, and
+ * sampling latest/ every sweep sees one instant in every two minutes. So the
+ * box sends the summary itself - computed from every 1 Hz sample - to a node
+ * no dashboard listens to. This sweep reads it once and deletes what it has
+ * processed, so it costs a few hundred bytes of download per minute and
+ * nothing is kept: the lasting record is the alert written to Firestore.
+ *
+ * Each tag is [min, avg, max, n] - an array rather than named fields because
+ * it is written and read every minute for the life of the device. The object
+ * form is accepted too.
+ */
+function parseAlertWindows(node) {
+  const out = [];
+  for (const [minuteKey, tags] of Object.entries(node || {})) {
+    const minute = Number(minuteKey);
+    if (!Number.isFinite(minute) || !tags || typeof tags !== 'object') continue;
+    const byTag = {};
+    for (const [tagKey, r] of Object.entries(tags)) {
+      const row = Array.isArray(r)
+        ? { min: r[0], avg: r[1], max: r[2], n: r[3] }
+        : r;
+      if (!row || !isNum(row.avg)) continue;
+      byTag[tagKey] = {
+        min: isNum(row.min) ? row.min : row.avg,
+        avg: row.avg,
+        max: isNum(row.max) ? row.max : row.avg,
+        n: isNum(row.n) ? row.n : 1,
+      };
+    }
+    if (Object.keys(byTag).length > 0) out.push({ minute, byTag });
+  }
+  return out.sort((a, b) => a.minute - b.minute);
+}
+
+/** Per-tag spike floors from tags/ metadata. See SPIKE_DEADBAND_STEPS. */
+function spikeFloorsFromTags(tagsMeta = {}) {
+  const floors = {};
+  for (const [k, m] of Object.entries(tagsMeta || {})) {
+    if (m && isNum(m.deadband) && m.deadband > 0) floors[k] = m.deadband * SPIKE_DEADBAND_STEPS;
+  }
+  return floors;
+}
+
 // Deterministic id, so a re-run over the same window cannot duplicate an
 // alert. Firestore .set() on the same id overwrites with identical content
 // instead of appending a second copy - the same property the archive relies
@@ -344,5 +434,7 @@ function alertId(ev) {
 }
 
 module.exports = {
-  evaluate, classify, isSpike, alertId, withLiveWindow, DEFAULT_OFFLINE_AFTER_MS,
+  evaluate, classify, isSpike, alertId, withLiveWindow,
+  alertWindowTags, parseAlertWindows, spikeFloorsFromTags,
+  DEFAULT_OFFLINE_AFTER_MS, SPIKE_DEADBAND_STEPS,
 };

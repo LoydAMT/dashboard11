@@ -1113,6 +1113,214 @@ test('withLiveWindow: sweep after sweep fires once, then clears, with no duplica
   assert.deepEqual(kinds, ['alarm-high', 'alarm-clear']);
 });
 
+// ---------------------------------------------------------------------------
+//  Alert windows: per-minute summaries a box sends purely for alerting
+// ---------------------------------------------------------------------------
+
+const {
+  alertWindowTags, parseAlertWindows, spikeFloorsFromTags, SPIKE_DEADBAND_STEPS,
+} = require('./alertEngine');
+
+test('alertWindows: the box\'s compact [min, avg, max, n] rows become engine windows', () => {
+  const node = {
+    [T0 + M]: { pH: [7.9, 8.0, 8.1, 60], Turbidity: [0.11, 0.12, 0.13, 60] },
+    [T0]: { pH: [7.8, 7.9, 8.0, 59] },
+  };
+  const windows = parseAlertWindows(node);
+  assert.deepEqual(windows.map((w) => w.minute), [T0, T0 + M], 'ascending by minute');
+  assert.deepEqual(windows[1].byTag.pH, { min: 7.9, avg: 8.0, max: 8.1, n: 60 });
+  assert.deepEqual(windows[1].byTag.Turbidity, { min: 0.11, avg: 0.12, max: 0.13, n: 60 });
+});
+
+test('alertWindows: junk keys and rows are skipped rather than crashing the sweep', () => {
+  const windows = parseAlertWindows({
+    notAMinute: { pH: [1, 2, 3, 4] },
+    [T0]: { pH: 'oops', Turbidity: [null, null, null, 0], Flow: { min: 1, avg: 2, max: 3, n: 60 } },
+    [T0 + M]: null,
+  });
+  assert.equal(windows.length, 1);
+  assert.deepEqual(Object.keys(windows[0].byTag), ['Flow'], 'object form accepted, bad rows dropped');
+  assert.deepEqual(parseAlertWindows(null), []);
+});
+
+test('alertWindows: a two-second excursion inside a minute is caught from the box summary', () => {
+  // The whole point: the mean is fine, only the minute's max betrays it -
+  // and a live sample every two minutes would never have seen it.
+  const rules = { Pressure: { hi: 40 } };
+  const windows = parseAlertWindows({
+    [T0]: { Pressure: [32.1, 32.2, 32.3, 60] },
+    [T0 + M]: { Pressure: [32.0, 32.4, 47.5, 60] },
+    [T0 + 2 * M]: { Pressure: [32.1, 32.2, 32.3, 60] },
+  });
+  const now = T0 + 3 * M;
+  const { events } = evaluate({ device: 'd', windows, rules, status: { lastSeen: now }, now });
+  assert.deepEqual(events.map((e) => e.kind), ['alarm-high', 'alarm-clear']);
+  assert.equal(events[0].value, 47.5);
+});
+
+test('alertWindows: a device is switched over by the flag on any of its tags', () => {
+  assert.deepEqual(alertWindowTags({ a: { minuteAlerts: true }, b: { name: 'b' }, c: null }), ['a']);
+  assert.deepEqual(alertWindowTags({ a: { name: 'a' } }), []);
+  assert.deepEqual(alertWindowTags(null), []);
+});
+
+test('spike floor: one sensor tick off a flat line is not a spike', () => {
+  // Free Chlorine at 0.42 ppm for ten minutes, then 0.44: sd is 0 and the
+  // move is 4.7% of the mean, so without a floor every test calls it a spike.
+  assert.equal(isSpike(flat(0.42), 0.44), true, 'the false positive being fixed');
+  assert.equal(isSpike(flat(0.42), 0.44, 0.06), false, 'under the floor: not a spike');
+  assert.equal(isSpike(flat(0.42), 0.55, 0.06), true, 'a real jump still is');
+});
+
+test('spike floor: comes from the tag\'s own published deadband', () => {
+  const floors = spikeFloorsFromTags({
+    Free_Chlorine: { deadband: 0.02 },
+    Voltage: { name: 'Voltage' },          // box publishes none: no floor, old behaviour
+    Bad: { deadband: 'x' },
+  });
+  assert.deepEqual(Object.keys(floors), ['Free_Chlorine']);
+  assert.ok(Math.abs(floors.Free_Chlorine - 0.02 * SPIKE_DEADBAND_STEPS) < 1e-12);
+});
+
+test('spike floor: applied by the engine per tag, and only to tags that have one', () => {
+  const run = (spikeFloors) => {
+    const node = {};
+    for (let i = 0; i < 12; i++) node[T0 + i * M] = { Cl: [0.42, 0.42, 0.42, 60], V: [230, 230, 230, 60] };
+    node[T0 + 12 * M] = { Cl: [0.42, 0.43, 0.44, 60], V: [230, 260, 400, 60] };
+    const now = T0 + 13 * M;
+    return evaluate({
+      device: 'd', windows: parseAlertWindows(node), rules: {}, status: { lastSeen: now }, now, spikeFloors,
+    }).events.map((e) => `${e.kind}:${e.tagKey}`);
+  };
+  assert.deepEqual(run({}), ['spike:Cl', 'spike:V'], 'without a floor both fire');
+  assert.deepEqual(run({ Cl: 0.06 }), ['spike:V'], 'the tick is dropped, the real jump kept');
+});
+
+// ---------------------------------------------------------------------------
+//  Live alerts: thresholds evaluated the moment a reading is published
+// ---------------------------------------------------------------------------
+
+const { thresholdStep, createAccumulator, triggerName } = require('./liveAlerts');
+
+// Feeds readings through thresholdStep the way the trigger does, one at a
+// time, carrying the state forward.
+const liveRun = (rule, readings) => {
+  let state = 'ok';
+  const events = [];
+  readings.forEach((value, i) => {
+    const r = thresholdStep({
+      device: 'd', tagKey: 'Flow', tagName: 'Flow', prev: state, value, ts: T0 + i * 1000, rule,
+    });
+    state = r.next;
+    if (r.event) events.push(r.event);
+  });
+  return { events, state };
+};
+
+test('liveAlerts: a reading that jumps from 10 to 100 alerts on THAT reading', () => {
+  const { events, state } = liveRun({ hi: 50 }, [10, 10, 100]);
+  assert.equal(events.length, 1);
+  assert.equal(events[0].kind, 'alarm-high');
+  assert.equal(events[0].value, 100);
+  assert.equal(events[0].limit, 50);
+  assert.equal(events[0].ts, T0 + 2000, 'stamped with the reading that crossed, not a later minute');
+  assert.equal(state, 'high');
+});
+
+test('liveAlerts: staying over the threshold is one alert, not one per reading', () => {
+  const { events } = liveRun({ hi: 50 }, [10, 100, 101, 99, 100, 102]);
+  assert.deepEqual(events.map((e) => e.kind), ['alarm-high']);
+});
+
+test('liveAlerts: clears when the reading returns, and can fire again', () => {
+  const { events } = liveRun({ hi: 50 }, [100, 100, 20, 20, 100]);
+  assert.deepEqual(events.map((e) => e.kind), ['alarm-high', 'alarm-clear', 'alarm-high']);
+});
+
+test('liveAlerts: the low side works the same way, and high-to-low is two alarms', () => {
+  assert.deepEqual(liveRun({ lo: 5 }, [10, 2, 10]).events.map((e) => e.kind), ['alarm-low', 'alarm-clear']);
+  assert.deepEqual(liveRun({ lo: 5, hi: 50 }, [100, 1]).events.map((e) => e.kind), ['alarm-high', 'alarm-low']);
+});
+
+test('liveAlerts: sitting exactly on the threshold is not over it', () => {
+  assert.deepEqual(liveRun({ hi: 50 }, [50, 50]).events, []);
+});
+
+test('liveAlerts: a tag with no rule raises nothing, and a removed rule clears quietly', () => {
+  assert.deepEqual(liveRun(null, [10, 100, 1000]).events, []);
+  // The tag was in alarm; its rule is then deleted on the admin page.
+  const r = thresholdStep({ device: 'd', tagKey: 'Flow', prev: 'high', value: 100, ts: T0, rule: null });
+  assert.equal(r.next, 'ok');
+  assert.equal(r.event, null, 'nothing happened to the reading, so nothing is recorded');
+});
+
+test('liveAlerts: a bad reading changes nothing', () => {
+  for (const value of [null, undefined, NaN, Infinity, '100']) {
+    const r = thresholdStep({ device: 'd', tagKey: 'Flow', prev: 'ok', value, ts: T0, rule: { hi: 50 } });
+    assert.equal(r.next, 'ok');
+    assert.equal(r.event, null);
+  }
+});
+
+test('liveAlerts: the alert has the same shape the sweep writes', () => {
+  const sweep = evaluate({
+    device: 'd', rules: { Flow: { hi: 50 } }, tagNames: { Flow: 'Flow' },
+    windows: [win(T0, 'Flow', { min: 100, avg: 100, max: 100, n: 1 })],
+    status: { lastSeen: T0 }, now: T0,
+  }).events[0];
+  const live = liveRun({ hi: 50 }, [100]).events[0];
+  assert.deepEqual(Object.keys(live).sort(), Object.keys(sweep).sort());
+  assert.equal(alertId(live), alertId(sweep), 'same id scheme, so a duplicate would overwrite, not append');
+});
+
+test('liveAlerts: the sweep leaves thresholds alone for a live device, but still finds spikes', () => {
+  const node = {};
+  for (let i = 0; i < 12; i++) node[T0 + i * M] = { V: [230, 230, 230, 60], P: [30, 30, 30, 60] };
+  node[T0 + 12 * M] = { V: [230, 260, 400, 60], P: [30, 55, 90, 60] };   // V spikes; P crosses hi
+  const now = T0 + 13 * M;
+  const args = {
+    device: 'd', windows: parseAlertWindows(node), rules: { P: { hi: 80 } },
+    prevState: { tags: { P: 'ok' } }, status: { lastSeen: now }, now,
+  };
+
+  const normal = evaluate(args);
+  assert.deepEqual(normal.events.map((e) => `${e.kind}:${e.tagKey}`).sort(), ['alarm-high:P', 'spike:V']);
+
+  const live = evaluate({ ...args, thresholds: false });
+  assert.deepEqual(live.events.map((e) => `${e.kind}:${e.tagKey}`), ['spike:V'],
+    'no threshold event, and no spike for P either - its crossing is the trigger\'s to report');
+  assert.equal(live.state.tags.P, 'ok', 'threshold state is not the sweep\'s to change');
+});
+
+test('liveAlerts accumulator: a minute is handed back once a later reading arrives', () => {
+  const acc = createAccumulator();
+  assert.deepEqual(acc.add('pH', 7.9, T0 + 1000), []);
+  assert.deepEqual(acc.add('pH', 8.3, T0 + 20000), []);
+  assert.deepEqual(acc.add('Cl', 0.42, T0 + 30000), []);
+  assert.deepEqual(acc.add('pH', 7.7, T0 + 50000), []);
+  const done = acc.add('pH', 8.0, T0 + M + 2000);   // first reading of the next minute
+  assert.equal(done.length, 1);
+  assert.equal(done[0].minute, T0);
+  assert.deepEqual(done[0].tags.pH, [7.7, 7.9667, 8.3, 3]);
+  assert.deepEqual(done[0].tags.Cl, [0.42, 0.42, 0.42, 1]);
+  // and it reads straight into the engine
+  assert.deepEqual(parseAlertWindows({ [done[0].minute]: done[0].tags })[0].byTag.pH,
+    { min: 7.7, avg: 7.9667, max: 8.3, n: 3 });
+});
+
+test('liveAlerts accumulator: each minute is handed back exactly once', () => {
+  const acc = createAccumulator();
+  acc.add('pH', 7.9, T0);
+  assert.equal(acc.add('pH', 8.0, T0 + M).length, 1);
+  assert.equal(acc.add('Cl', 0.4, T0 + M + 500).length, 0, 'the same minute must not be flushed twice');
+  assert.equal(acc.add('pH', 8.1, T0 + 3 * M).length, 1, 'a gap closes the open minute, not the empty ones');
+});
+
+test('liveAlerts: function names are valid for any device id', () => {
+  assert.equal(triggerName('UMPD-MCWD'), 'liveAlerts_UMPD_MCWD');
+  assert.match(triggerName('wecon2-c3'), /^[A-Za-z][A-Za-z0-9_]*$/);
+});
+
 test('withLiveWindow: a steadily rising totalizer does not read as a spike', () => {
   let state = {};
   const kinds = [];

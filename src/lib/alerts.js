@@ -51,13 +51,31 @@ const MIN_SAMPLES = 8
 const Z_THRESHOLD = 4
 const MIN_DELTA_FRACTION = 0.02
 
-/** Is `value` a spike against the trailing `buffer` (oldest first, `value` not yet included)? */
-export function isSpike(buffer, value) {
+// A move smaller than this many of the tag's own publish steps (its
+// `deadband`, from tags/) is not a spike. Mirrors SPIKE_DEADBAND_STEPS in
+// functions/alertEngine.js, so the bell and the server record agree.
+//
+// A box with a deadband republishes an unchanged value on its heartbeat, so
+// a steady tag fills this buffer with identical readings: sd is exactly 0.
+// The next real tick - Free Chlorine going 0.42 -> 0.44 ppm - was then 4.7%
+// off a perfectly flat mean and passed every test above. That is the sensor
+// moving one step, not an event.
+export const SPIKE_DEADBAND_STEPS = 3
+
+/** The absolute spike floor for a tag, or 0 when its box publishes no deadband. */
+export const spikeFloorFor = (tag) =>
+  (typeof tag?.deadband === 'number' && tag.deadband > 0 ? tag.deadband * SPIKE_DEADBAND_STEPS : 0)
+
+/**
+ * Is `value` a spike against the trailing `buffer` (oldest first, `value` not
+ * yet included)? `minDelta` is an absolute floor in the tag's units; 0 = none.
+ */
+export function isSpike(buffer, value, minDelta = 0) {
   if (buffer.length < MIN_SAMPLES) return false
   const mean = buffer.reduce((a, b) => a + b, 0) / buffer.length
   const variance = buffer.reduce((a, b) => a + (b - mean) ** 2, 0) / buffer.length
   const sd = Math.sqrt(variance)
   const delta = Math.abs(value - mean)
-  const floor = Math.max(sd * Z_THRESHOLD, Math.abs(mean) * MIN_DELTA_FRACTION, 1e-9)
+  const floor = Math.max(sd * Z_THRESHOLD, Math.abs(mean) * MIN_DELTA_FRACTION, minDelta, 1e-9)
   return delta > floor
 }

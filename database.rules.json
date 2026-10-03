@@ -356,6 +356,18 @@
       }
     },
 
+    // Per-minute min/mean/max a box sends purely so the server can evaluate
+    // alerts (functions/alertEngine.js: parseAlertWindows). Closed to every
+    // client on purpose: the box writes it with the database secret, the
+    // alertSweep function reads it with the Admin SDK and deletes it a
+    // couple of minutes later - both bypass these rules. No dashboard has a
+    // reason to read it, and nothing listening here is exactly what keeps
+    // it from costing any download beyond that one server read.
+    "alertWindows": {
+      ".read": false,
+      ".write": false
+    },
+
     // Tags whose dashboard dial an admin has switched off - a totalizer, say,
     // where a dial scaled to recent readings says nothing the number does not
     // (components/GaugeDisplay.jsx). Only "off" is stored; a tag that is not
