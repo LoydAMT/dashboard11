@@ -460,6 +460,7 @@ function Dashboard() {
           onOpenDevice={(id) => { setChosenDeviceId(id); setMallView(null) }}
           onOpenLog={companyPremium ? () => setMallPage('log') : null}
           onOpenBilling={companyPremium ? () => setMallPage('billing') : null}
+          premium={companyPremium}
           onClose={() => setMallView(null)}
         />
       )}

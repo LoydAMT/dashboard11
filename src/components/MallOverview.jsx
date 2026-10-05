@@ -7,13 +7,16 @@ import { TagGauge } from './TagGauge'
 import { formatAgo } from '../lib/time'
 import { kwhSoFar, liveKwhOf } from '../lib/kwh'
 import { BackButton } from './BackButton'
+import { MallHistory } from './MallHistory'
 
 /**
  * Every tenant in a mall, on ONE page, each with its own dial.
  *
  * This is the whole product for a landlord: walk up to the screen and see
  * all of it at once. Opening a single tenant is still possible, but it is
- * the exception - not the way the page is meant to be read.
+ * the exception - not the way the page is meant to be read. Beneath the
+ * dials, MallHistory puts every meter's history on one chart and in one
+ * table, with the export.
  *
  * ONE SUBSCRIPTION DRAWS ALL OF THEM. Every dial's thresholds and its scale
  * arrive inside mallOverview/{companyId}, written by the sweep that already
@@ -24,7 +27,9 @@ import { BackButton } from './BackButton'
  * of ninety shops buries the one that is offline, which is the only tile
  * that matters on the day it happens.
  */
-export function MallOverview({ companyId, companyName, onOpenDevice, onClose, nowMs, onOpenLog, onOpenBilling }) {
+export function MallOverview({
+  companyId, companyName, onOpenDevice, onClose, nowMs, onOpenLog, onOpenBilling, premium = false,
+}) {
   const [sortKey, setSortKey] = useState('attention')
   // Which reading each tenant shows on its dial, chosen by clicking one of
   // the numbers on the tile. Per VIEWER, not per company: two people can
@@ -205,6 +210,13 @@ export function MallOverview({ companyId, companyName, onOpenDevice, onClose, no
           />
         ))}
       </div>
+
+      {/* Trends, tables and the export for every meter here. The memoised
+          `tenants`, not the ranked `rows`: that array is rebuilt on every
+          tick of the clock and would re-render the panel each second. */}
+      {tenants.length > 0 && (
+        <MallHistory companyId={companyId} tenants={tenants} premium={premium} />
+      )}
     </div>
   )
 }

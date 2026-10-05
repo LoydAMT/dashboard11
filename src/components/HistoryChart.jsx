@@ -28,8 +28,15 @@ const ANOMALY_TEXT = { 'breach-hi': 'above its alert threshold', 'breach-lo': 'b
  * label at the end of every line — three of the light-mode palette slots fall
  * below 3:1 against the panel surface, so colour alone is never asked to carry
  * it.
+ *
+ * `points` marks every plotted point, for a series sparse enough that the
+ * points ARE the data - one figure a day, where a line alone would draw a
+ * lone day as nothing at all. `emptyHint` replaces the second line of the
+ * empty state, for a caller whose data is not minute rollups.
  */
-export function HistoryChart({ tags, colors, data, rangeMs, raw, indexed, loading, error }) {
+export function HistoryChart({
+  tags, colors, data, rangeMs, raw, indexed, loading, error, points = false, emptyHint = null,
+}) {
   const single = tags.length === 1 ? tags[0] : null
   const isBool = single?.dataType === 'bool'
 
@@ -79,9 +86,9 @@ export function HistoryChart({ tags, colors, data, rangeMs, raw, indexed, loadin
         <div className="placeholder">
           No history in this range.
           <br />
-          {raw
+          {emptyHint || (raw
             ? 'A raw range only holds what was pushed inside this short window — try a wider one.'
-            : 'Rollups appear a minute or so after the pusher starts writing.'}
+            : 'Rollups appear a minute or so after the pusher starts writing.')}
         </div>
       </div>
     )
@@ -178,7 +185,11 @@ export function HistoryChart({ tags, colors, data, rangeMs, raw, indexed, loadin
               stroke={colors[tag.key]}
               strokeWidth={2}
               dot={(props) => (
-                <AnomalyDot {...props} kind={anomalies[tag.key]?.get(props.payload?.t)} />
+                <AnomalyDot
+                  {...props}
+                  kind={anomalies[tag.key]?.get(props.payload?.t)}
+                  plain={points ? colors[tag.key] : null}
+                />
               )}
               isAnimationActive={false}
               connectNulls={false}
@@ -214,10 +225,17 @@ export function HistoryChart({ tags, colors, data, rangeMs, raw, indexed, loadin
 /**
  * A marked point, drawn only where `kind` says something is actually wrong -
  * every ordinary point still has `dot={false}`'s effect (nothing drawn), so a
- * healthy trend looks exactly as clean as it always did.
+ * healthy trend looks exactly as clean as it always did. `plain` is the
+ * series colour when every point is to be marked (see `points` above); an
+ * anomaly still takes precedence over it.
  */
-function AnomalyDot({ cx, cy, kind }) {
-  if (!kind || cx == null || cy == null) return null
+function AnomalyDot({ cx, cy, kind, plain }) {
+  if (cx == null || cy == null) return null
+  if (!kind) {
+    return plain
+      ? <circle cx={cx} cy={cy} r={3} fill={plain} stroke="var(--surface)" strokeWidth={1} />
+      : null
+  }
   return (
     <circle
       cx={cx}

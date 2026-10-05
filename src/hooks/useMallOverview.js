@@ -13,9 +13,9 @@ import { kwhSoFar } from '../lib/kwh'
  * subscription and the server does the fan-in once for everybody.
  *
  * It is a SUMMARY. Live values, alert state, and the daily 22:00 meter
- * reading - no history. Opening a tenant gives you the real dashboard, with
- * its trends, its chart and its full alert log; duplicating any of that here
- * would recreate the traffic this exists to avoid.
+ * reading - no history. History for the whole company is read separately
+ * and only on demand (components/MallHistory.jsx), so the wall itself still
+ * costs one subscription however many tenants there are.
  */
 export function useMallOverview(companyId, enabled = true) {
   const on = Boolean(companyId) && enabled

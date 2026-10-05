@@ -48,6 +48,7 @@ export function exportFilename({ deviceId, rangeLabel, ext }) {
   const p = (n) => String(n).padStart(2, '0')
   const stamp = `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`
     + `-${p(d.getHours())}${p(d.getMinutes())}`
-  const device = (deviceId || 'device').replace(/[^\w.-]+/g, '-')
-  return `${device}-telemetry-${rangeLabel}-${stamp}.${ext}`
+  const safe = (s) => String(s).replace(/[^\w.-]+/g, '-')
+  // The range too: "7 days" and "Last 5 min" are labels, not filename parts.
+  return `${safe(deviceId || 'device')}-telemetry-${safe(rangeLabel)}-${stamp}.${ext}`
 }
