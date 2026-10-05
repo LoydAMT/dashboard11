@@ -15,7 +15,7 @@ import { useAlertCenter } from './hooks/useAlertCenter'
 import { systemState, stalenessThreshold, tagStalenessThreshold, isStaleLevel } from './lib/health'
 import { discoverTagKeys, buildTag, formatValue, displayUnit, limitState, FREQUENCY_TAG_KEY } from './lib/tags'
 import { colorForIndex, MAX_SERIES } from './lib/palette'
-import { brandsFor } from './lib/brands'
+import { brandsFor, brandsForCompany } from './lib/brands'
 import { mergeSeries } from './lib/series'
 import { rangeById, DEFAULT_RANGE, isRawRange } from './lib/ranges'
 import { buildTable } from './lib/table'
@@ -382,7 +382,7 @@ function Dashboard() {
     <div className="app">
       <Masthead
         deviceName={ready ? deviceName : null}
-        partners={ready && !mallView ? brandsFor(deviceId) : undefined}
+        partners={mallView ? brandsForCompany(mallView.id) : ready ? brandsFor(deviceId) : undefined}
         periodMs={periodMs}
         email={ready ? user?.email : null}
         onSignOut={signOutUser}
