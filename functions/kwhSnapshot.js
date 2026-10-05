@@ -99,4 +99,40 @@ function buildSnapshot({ device, latest, previous = null, now }) {
   };
 }
 
-module.exports = { buildSnapshot, phDateKey, MS_PER_DAY, PH_OFFSET_MS };
+/** Epoch ms at which the Philippine calendar day containing `ms` began. */
+function phDayStart(ms) {
+  return Math.floor((ms + PH_OFFSET_MS) / MS_PER_DAY) * MS_PER_DAY - PH_OFFSET_MS;
+}
+
+/**
+ * Yesterday's reading taken from history/kWh/raw, for a meter that has no
+ * kwhDaily record to subtract from.
+ *
+ * That is every meter on its first night - and a meter whose earlier
+ * readings were entered by hand from the box's own log has history in raw
+ * and nowhere else. Without this its first snapshot reports no consumption
+ * although yesterday's reading is sitting right there.
+ *
+ * Only a reading from YESTERDAY (Philippine time) counts. An older one would
+ * turn several days of consumption into one day's figure, and today's own
+ * 22:00 reading is the very number being subtracted from.
+ *
+ * @param raw  { [epochMs]: value } - any slice of history/kWh/raw
+ * @param now  when the snapshot is being taken
+ * @returns { value, readingTs, dateKey } or null
+ */
+function previousFromRaw(raw, now) {
+  const today = phDayStart(now);
+  let best = null;
+  for (const [k, v] of Object.entries(raw || {})) {
+    const ts = Number(k);
+    if (!isNum(ts) || !isNum(v)) continue;
+    if (ts >= today || ts < today - MS_PER_DAY) continue;
+    if (!best || ts > best.readingTs) best = { value: v, readingTs: ts, dateKey: phDateKey(ts) };
+  }
+  return best;
+}
+
+module.exports = {
+  buildSnapshot, previousFromRaw, phDateKey, phDayStart, MS_PER_DAY, PH_OFFSET_MS,
+};

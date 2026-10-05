@@ -1507,7 +1507,7 @@ test('alertEngine: spike baseline survives a restart via stored state', () => {
 // report negative usage, never hide how stale the reading was, and put the
 // reading on the right Philippine calendar day.
 
-const { buildSnapshot, phDateKey } = require('./kwhSnapshot');
+const { buildSnapshot, previousFromRaw, phDateKey, phDayStart } = require('./kwhSnapshot');
 
 const AT_2200_PHT = Date.parse('2026-09-19T14:00:00Z');
 
@@ -1560,6 +1560,41 @@ test('kwhSnapshot: a meter that went BACKWARDS is a reset, not negative usage', 
   });
   assert.equal(s.resetSuspected, true);
   assert.equal(s.deltaKwh, null, 'negative consumption must never be reported');
+});
+
+test('kwhSnapshot: the Philippine day starts at 16:00 UTC the day before', () => {
+  assert.equal(phDayStart(AT_2200_PHT), Date.parse('2026-09-18T16:00:00Z'));
+  assert.equal(phDayStart(Date.parse('2026-09-18T16:00:00Z')), Date.parse('2026-09-18T16:00:00Z'));
+  assert.equal(phDayStart(Date.parse('2026-09-18T15:59:59Z')), Date.parse('2026-09-17T16:00:00Z'));
+});
+
+test('kwhSnapshot: with no daily record, yesterday comes from the stored readings', () => {
+  // A meter on its first night, its earlier 22:00 readings entered from the
+  // box's own log. Taken at 22:05, after today's reading has been stored too.
+  const now = AT_2200_PHT + 5 * 60000;
+  const DAY = 86400000;
+  const raw = {
+    [AT_2200_PHT - 2 * DAY]: 182124.6,
+    [AT_2200_PHT - DAY]: 182216.6,       // yesterday, 22:00
+    [AT_2200_PHT]: 182289.5,             // today's own reading
+  };
+  const previous = previousFromRaw(raw, now);
+  assert.deepEqual(previous, { value: 182216.6, readingTs: AT_2200_PHT - DAY, dateKey: '2026-09-18' });
+  const s = buildSnapshot({
+    device: 'ayala-box1-2', latest: { value: 182289.5, ts: AT_2200_PHT }, previous, now,
+  });
+  assert.ok(Math.abs(s.deltaKwh - 72.9) < 1e-6);
+});
+
+test('kwhSnapshot: a stored reading older than yesterday is not used as yesterday', () => {
+  const now = AT_2200_PHT + 5 * 60000;
+  const DAY = 86400000;
+  // Three days of consumption must not be booked as one day's.
+  assert.equal(previousFromRaw({ [AT_2200_PHT - 3 * DAY]: 100 }, now), null);
+  // Today's own reading is not a previous one either.
+  assert.equal(previousFromRaw({ [AT_2200_PHT]: 100 }, now), null);
+  assert.equal(previousFromRaw(null, now), null);
+  assert.equal(previousFromRaw({ junk: 5, [AT_2200_PHT - DAY]: 'x' }, now), null);
 });
 
 test('kwhSnapshot: no reading at all is recorded honestly, not as zero', () => {

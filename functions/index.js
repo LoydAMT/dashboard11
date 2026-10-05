@@ -44,7 +44,7 @@ const LIVE_RULES_TTL_MS = 2 * 60000;
 // Tag names and company ownership change rarely; an hour is plenty.
 const LIVE_META_TTL_MS = 60 * 60000;
 const LIVE_LOG_EVERY_MS = 10 * 60000;
-const { buildSnapshot, phDateKey } = require('./kwhSnapshot');
+const { buildSnapshot, previousFromRaw, phDateKey, phDayStart } = require('./kwhSnapshot');
 const AF = require('./archiveFormat');
 const { listDevices, overviewCompanies, companiesByDevice } = require('./deviceRegistry');
 const { tenantRow, rollUp } = require('./mallOverview');
@@ -1090,7 +1090,16 @@ exports.kwhDailySnapshot = onSchedule(
             .orderBy('dateKey', 'desc').limit(1).get(),
         ]);
 
-        const previous = prevSnap.empty ? null : prevSnap.docs[0].data();
+        let previous = prevSnap.empty ? null : prevSnap.docs[0].data();
+        if (!previous) {
+          // No daily record yet: fall back to yesterday's stored reading, so
+          // a meter whose history exists only in raw still gets a figure on
+          // its first night. One extra read, and only for such a meter.
+          const rawSnap = await rtdb.ref(`devices/${device}/history/kWh/raw`)
+            .orderByKey().endAt(String(phDayStart(now) - 1)).limitToLast(1)
+            .once('value');
+          previous = previousFromRaw(rawSnap.val(), now);
+        }
         const record = buildSnapshot({
           device,
           latest: latestSnap.val(),
