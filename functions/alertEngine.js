@@ -332,6 +332,22 @@ function withLiveWindow({ windows = [], latest = {}, tagKeys = [], now = Date.no
     for (const k of Object.keys((w && w.byTag) || {})) counts[k] = (counts[k] || 0) + 1;
   }
 
+  // ALL OR NOTHING, PER DEVICE. If any tag on this device is on minute
+  // rollups, no live window is added for the others.
+  //
+  // The watermark (lastMinute) is one number for the whole device. A live
+  // sample is filed under the minute it was read in - which, on a box whose
+  // other tags have rollups, is a minute whose rollup has not been written
+  // yet. Evaluating it would move the watermark onto that minute, and the
+  // rollup for the same minute, arriving sixty seconds later, would then be
+  // skipped as already seen. A kWh meter read every ten minutes beside
+  // Current and Voltage on rollups would cost those two tags one minute of
+  // alert evaluation in every ten - worse on a box whose clock runs ahead.
+  //
+  // The tags this leaves out (an accumulator, a live-only tag) had no alert
+  // evaluation before the live window existed either, so nothing is lost.
+  if (Object.values(counts).some((n) => n >= LIVE_MIN_ROLLUPS)) return windows;
+
   const byTag = {};
   let newest = 0;
   for (const k of tagKeys) {

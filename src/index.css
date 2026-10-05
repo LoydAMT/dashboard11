@@ -2588,6 +2588,9 @@ body {
   line-height: 1.1;
 }
 .mall-stat-l { font-size: .72rem; color: var(--text-faint); }
+/* A second caption under the first: the last finished day, beneath the
+   running one. */
+.mall-stat-l2 { display: block; margin-top: 2px; }
 .mall-stat.is-bad .mall-stat-n { color: var(--alarm-hi); }
 .mall-stat.is-good .mall-stat-n { color: var(--live); }
 

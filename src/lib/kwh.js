@@ -106,6 +106,70 @@ export function formatKwhSpan(ms) {
 }
 
 /**
+ * When the reading held in a daily snapshot was taken.
+ *
+ * Newer snapshots say so (`readingTs`). Older ones carry only the date, and
+ * the reading they hold is by construction the 22:00 Philippine-time one for
+ * that date (UTC+8, no DST) - so the moment can be rebuilt from it.
+ */
+export function snapshotReadingTs(snapshot) {
+  if (typeof snapshot?.readingTs === 'number' && Number.isFinite(snapshot.readingTs)) {
+    return snapshot.readingTs
+  }
+  if (typeof snapshot?.date === 'string') {
+    const t = Date.parse(`${snapshot.date}T22:00:00+08:00`)
+    return Number.isFinite(t) ? t : null
+  }
+  return null
+}
+
+/**
+ * Energy used since the last daily meter reading - the running figure for
+ * the day in progress.
+ *
+ * It is the SAME quantity as the completed-day figure beside it, measured
+ * the same way from the same starting point, just not finished yet: at 22:00
+ * it becomes that day's figure and starts again from zero. That is why the
+ * baseline is the 22:00 snapshot and not midnight - a number that reset at
+ * midnight would never agree with what the tenant is billed.
+ *
+ * @param snapshot  the last daily snapshot: { value, date, readingTs? }
+ * @param live      the meter's latest reading: { v, ts }
+ * @returns null when there is nothing honest to show, else
+ *          { used, reset, sinceTs, asOf }
+ *
+ * Returns null for a box that still reads its meter once a day: its "latest"
+ * reading IS the snapshot's, and showing "0.0 so far" all day would look like
+ * a tenant using nothing. The live reading has to be a later one.
+ */
+export function kwhSoFar(snapshot, live) {
+  if (!snapshot || typeof snapshot.value !== 'number' || !Number.isFinite(snapshot.value)) return null
+  if (!live || typeof live.v !== 'number' || !Number.isFinite(live.v)) return null
+  if (typeof live.ts !== 'number' || !Number.isFinite(live.ts)) return null
+
+  const sinceTs = snapshotReadingTs(snapshot)
+  if (sinceTs == null) return null
+  if (live.ts <= sinceTs + MINUTE) return null
+
+  const used = live.v - snapshot.value
+  // A meter only counts up. Lower than the snapshot means it was reset or
+  // replaced - flagged, never shown as negative consumption.
+  if (used < 0) return { used: null, reset: true, sinceTs, asOf: live.ts }
+  return { used, reset: false, sinceTs, asOf: live.ts }
+}
+
+/** The meter reading in a device's latest/ node, as { v, ts } - or null. */
+export function liveKwhOf(latest) {
+  for (const [k, v] of Object.entries(latest || {})) {
+    if (!/kwh/i.test(k)) continue
+    if (!v || typeof v.value !== 'number' || !Number.isFinite(v.value)) continue
+    if (typeof v.ts !== 'number' || !Number.isFinite(v.ts)) continue
+    return { v: v.value, ts: v.ts }
+  }
+  return null
+}
+
+/**
  * A reading or a delta, as a plain fixed-point number - never the scientific
  * notation lib/tags.js's formatValue falls back to under 0.01. That branch
  * exists for physical readings like Current, where a small value is still

@@ -1073,6 +1073,31 @@ test('withLiveWindow: a tag on minute rollups is left alone', () => {
   assert.deepEqual(windows, history, 'rollups carry min/max; the live sample must not be mixed in');
 });
 
+test('withLiveWindow: a kWh read every 10 minutes cannot cost a rollup box its alerts', () => {
+  // Current is on minute rollups; kWh is not, and was just read - in a
+  // minute whose Current rollup has not been written yet.
+  const history = [0, 1, 2, 3].map((i) => win(T0 + i * M, 'Current', { min: 1, avg: 2, max: 3, n: 60 }));
+  const now = T0 + 4 * M + 5000;
+  const windows = withLiveWindow({
+    windows: history,
+    latest: { Current: { value: 2, ts: now - 1000 }, kWh: { value: 15000.5, ts: now - 2000 } },
+    tagKeys: ['Current', 'kWh'],
+    now,
+  });
+  assert.deepEqual(windows, history, 'no live window on a device that has rollups');
+
+  // And the consequence that matters: the rollup for that minute, arriving a
+  // minute later with a threshold crossing in it, is still evaluated.
+  const first = evaluate({ device: 'd', windows, rules: { Current: { hi: 10 } }, status: { lastSeen: now }, now });
+  assert.equal(first.state.lastMinute, T0 + 3 * M, 'watermark stays on the last real rollup');
+  const later = [...history, win(T0 + 4 * M, 'Current', { min: 2, avg: 9, max: 40, n: 60 })];
+  const second = evaluate({
+    device: 'd', windows: later, rules: { Current: { hi: 10 } },
+    prevState: first.state, status: { lastSeen: now + M }, now: now + M,
+  });
+  assert.deepEqual(second.events.map((e) => e.kind), ['alarm-high']);
+});
+
 test('withLiveWindow: a stale latest reading is not evaluated', () => {
   const now = T0 + 60 * M;
   const windows = withLiveWindow({
@@ -1724,6 +1749,33 @@ test('mallOverview: a tenant the engine never evaluated is not assumed fine', ()
     status: { lastSeen: 10 * 60000 - 1000 }, offline: null,
   });
   assert.equal(fresh.alarm, 'ok');
+});
+
+test('mallOverview: the meter reading is carried at full precision for "used so far"', () => {
+  const row = MO.tenantRow({
+    deviceId: 'd', now: 1000, status: { lastSeen: 1000 }, offline: false,
+    latest: {
+      Current: { value: 4.2, ts: 990 },
+      kWh: { value: 1259433.1274, ts: 600000 },
+    },
+  });
+  // The dial value is rounded to six significant digits - fine for a dial...
+  assert.equal(row.values.kWh.v, 1259430);
+  // ...and useless for a subtraction, which is why the reading rides apart.
+  assert.deepEqual(row.kwhLive, { v: 1259433.127, ts: 600000 });
+});
+
+test('mallOverview: no meter, no kwhLive - and a bad reading is not passed on', () => {
+  const none = MO.tenantRow({
+    deviceId: 'd', now: 1000, status: { lastSeen: 1000 }, offline: false,
+    latest: { Current: { value: 4.2, ts: 990 } },
+  });
+  assert.equal(none.kwhLive, null);
+  const bad = MO.tenantRow({
+    deviceId: 'd', now: 1000, status: { lastSeen: 1000 }, offline: false,
+    latest: { kWh: { value: 'x', ts: 990 } },
+  });
+  assert.equal(bad.kwhLive, null);
 });
 
 test('mallOverview: a dial arrives with its own thresholds, no extra read', () => {

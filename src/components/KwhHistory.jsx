@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react'
 import { useKwhHistory } from '../hooks/useKwhHistory'
 import {
   KWH_RANGES, DEFAULT_KWH_RANGE, buildKwhRows, kwhTotal, formatKwhSpan,
-  formatKwhAmount,
+  formatKwhAmount, kwhSoFar,
 } from '../lib/kwh'
 import { displayUnit } from '../lib/tags'
 import { formatLocal } from '../lib/time'
@@ -40,6 +40,16 @@ export function KwhHistory({ deviceId, tag, premium }) {
   const unit = displayUnit(tag)
   const fmt = formatKwhAmount
 
+  // The day in progress: the live meter reading minus the newest stored
+  // one. Stored readings are the daily 22:00 ones, so on a box that also
+  // reads its meter through the day this is "used since 10 PM" - the same
+  // figure the overview tile shows. Null on a box that only reads once a
+  // day, where the live reading IS the newest stored one.
+  const newest = rows[0] || null
+  const soFar = newest
+    ? kwhSoFar({ value: newest.value, readingTs: newest.t }, { v: tag.value, ts: tag.ts })
+    : null
+
   return (
     <section className="panel" aria-labelledby="kwh-heading">
       <div className="panel-head">
@@ -73,6 +83,15 @@ export function KwhHistory({ deviceId, tag, premium }) {
       ) : (
         <>
           <dl className="stats" aria-label={`${tag.name} consumption over ${range.label}`}>
+            {soFar && (
+              <div className="stat stat-live">
+                <dt>used since {formatLocal(soFar.sinceTs)}</dt>
+                <dd>
+                  {soFar.reset ? 'meter reset?' : fmt(soFar.used)}
+                  {!soFar.reset && unit && <span className="stat-unit">{unit}</span>}
+                </dd>
+              </div>
+            )}
             {premium && (
               <div className="stat stat-live">
                 <dt>total, {range.label.toLowerCase()}</dt>

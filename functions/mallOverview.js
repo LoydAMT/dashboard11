@@ -151,7 +151,30 @@ function tenantRow({
     online: !isOffline,
     lastSeen,
     values,
+    kwhLive: kwhLiveOf(latest),
   };
+}
+
+/**
+ * The meter's latest reading, kept apart from `values`.
+ *
+ * `values` rounds everything to six significant digits, which is right for a
+ * dial and wrong for a meter total: 59,433.127 kWh becomes 59,433.1, and at a
+ * million kWh the last ten are gone. "Used so far" is the DIFFERENCE between
+ * two such totals, so that rounding would be most of the answer. This carries
+ * the reading to three decimals, with the moment it was taken.
+ *
+ * It is the reading only. What it is subtracted from - the last 22:00
+ * snapshot - is written by kwhDailySnapshot into the same tenant node, and
+ * the page does the subtraction: two writers, each owning its own field.
+ */
+function kwhLiveOf(latest) {
+  for (const [k, v] of Object.entries(latest || {})) {
+    if (!/kwh/i.test(k)) continue;
+    if (!v || !isNum(v.value) || !isNum(v.ts)) continue;
+    return { v: Number(v.value.toFixed(3)), ts: v.ts };
+  }
+  return null;
 }
 
 /**

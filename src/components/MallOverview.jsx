@@ -5,6 +5,7 @@ import { useCompany } from '../hooks/useCompanies'
 import { gaugeScale, readoutFit } from '../lib/gauge'
 import { TagGauge } from './TagGauge'
 import { formatAgo } from '../lib/time'
+import { kwhSoFar, liveKwhOf } from '../lib/kwh'
 import { BackButton } from './BackButton'
 
 /**
@@ -56,6 +57,16 @@ export function MallOverview({ companyId, companyName, onOpenDevice, onClose, no
   const recent = recentAlerts(tenants)
   const needsAttention = (totals?.inAlarm || 0) + (totals?.offline || 0)
 
+  // The running total for the day in progress, across the tenants whose box
+  // reads its meter during the day. Summed here from the same two fields each
+  // tile uses, so the headline and the tiles cannot disagree. A tenant whose
+  // meter was reset is left out of the sum rather than counted as zero.
+  const running = tenants
+    .map((t) => kwhSoFar(t.kwh, t.kwhLive))
+    .filter((s) => s && !s.reset)
+  const runningTotal = running.reduce((sum, s) => sum + s.used, 0)
+  const runningSince = running.length ? Math.min(...running.map((s) => s.sinceTs)) : null
+
   return (
     <div className="mall">
       {onClose && <BackButton onClick={onClose}>Back to dashboard</BackButton>}
@@ -84,20 +95,39 @@ export function MallOverview({ companyId, companyName, onOpenDevice, onClose, no
           <span className="mall-stat-n">{totals?.offline ?? '—'}</span>
           <span className="mall-stat-l">offline</span>
         </div>
-        <div className="mall-stat">
-          <span className="mall-stat-n">
-            {totals?.kwhToday != null ? totals.kwhToday.toFixed(1) : '—'}
-          </span>
-          {/* Says what the total covers. A mall figure spanning 40 of 90
-              units is misleading unless it admits it. */}
-          <span className="mall-stat-l">
-            kWh {totals?.kwhDate || ''}
-            {totals?.kwhFrom != null && totals?.tenants != null
-              && totals.kwhFrom < totals.tenants
-              ? ` · ${totals.kwhFrom} of ${totals.tenants} units`
-              : ''}
-          </span>
-        </div>
+        {running.length > 0 ? (
+          // The day in progress leads when any tenant has it; the last
+          // finished day drops to the line beneath, still dated.
+          <div className="mall-stat">
+            <span className="mall-stat-n">{runningTotal.toFixed(1)}</span>
+            {/* Says what the total covers. A mall figure spanning 40 of 90
+                units is misleading unless it admits it. */}
+            <span className="mall-stat-l">
+              kWh so far · since {clock(runningSince)}
+              {totals?.tenants != null && running.length < totals.tenants
+                ? ` · ${running.length} of ${totals.tenants} units`
+                : ''}
+            </span>
+            {totals?.kwhToday != null && (
+              <span className="mall-stat-l mall-stat-l2">
+                last full day {totals.kwhToday.toFixed(1)} kWh ({totals.kwhDate || ''})
+              </span>
+            )}
+          </div>
+        ) : (
+          <div className="mall-stat">
+            <span className="mall-stat-n">
+              {totals?.kwhToday != null ? totals.kwhToday.toFixed(1) : '—'}
+            </span>
+            <span className="mall-stat-l">
+              kWh last full day {totals?.kwhDate ? `(${totals.kwhDate})` : ''}
+              {totals?.kwhFrom != null && totals?.tenants != null
+                && totals.kwhFrom < totals.tenants
+                ? ` · ${totals.kwhFrom} of ${totals.tenants} units`
+                : ''}
+            </span>
+          </div>
+        )}
       </div>
 
       <div className="mall-sorts">
@@ -203,6 +233,12 @@ function TenantTile({ tenant, nowMs, onOpen, live, chosen, picked, onPick }) {
   const liveLatest = useRtdbValue(live ? `devices/${tenant.id}/latest` : null, live)
   const merged = mergeLive(tenant, liveLatest.data)
 
+  // The day in progress: the meter's latest reading minus the last 22:00
+  // snapshot. The live subscription's reading is used when this tile has
+  // one, so the figure moves when the box reads the meter rather than on
+  // the next two-minute projection.
+  const soFar = kwhSoFar(tenant.kwh, liveKwhOf(liveLatest.data) || tenant.kwhLive)
+
   const shown = visibleTags(merged, chosen)
   // The viewer's own pick wins over the configured default, and falls back
   // to it the moment that tag stops reporting - a tile must not go blank
@@ -288,11 +324,26 @@ function TenantTile({ tenant, nowMs, onOpen, live, chosen, picked, onPick }) {
         ))}
       </div>
 
-      {/* The day's consumption, not the meter total - a different number
-          from the kWh reading above, and the one a landlord bills on. */}
+      {/* The day in progress, for a box that reads its meter through the
+          day. Counted from the last 22:00 reading, so at 22:00 it becomes
+          the "last full day" figure below and starts again. */}
+      {soFar && (
+        <div
+          className="tenant-meter"
+          title={`Used since the meter reading at ${clock(soFar.sinceTs)}. Meter last read ${formatAgo(nowMs - soFar.asOf)}.`}
+        >
+          {soFar.reset
+            ? <em className="mall-warn">meter reset</em>
+            : <><b>{soFar.used.toFixed(1)}</b> kWh so far</>}
+        </div>
+      )}
+
+      {/* The last FINISHED day's consumption, not the meter total - a
+          different number from the kWh reading above, and the one a
+          landlord bills on. */}
       {tenant.kwh?.deltaKwh != null && (
-        <div className="tenant-meter">
-          <b>{tenant.kwh.deltaKwh.toFixed(1)}</b> kWh today
+        <div className={`tenant-meter ${soFar ? 'tenant-today' : ''}`}>
+          <b>{tenant.kwh.deltaKwh.toFixed(1)}</b> kWh last full day
           {/* A reset makes the day's delta meaningless, so it is flagged
               rather than quietly billed. */}
           {tenant.kwh.resetSuspected && <em className="mall-warn"> meter reset</em>}
@@ -377,6 +428,12 @@ function mergeLive(tenant, latest) {
     values[k] = { ...(values[k] || {}), v: v.value }
   }
   return { ...tenant, values }
+}
+
+/** A moment as a short local clock time - "10:00 PM". */
+function clock(ms) {
+  if (ms == null) return '—'
+  return new Date(ms).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
 }
 
 /**

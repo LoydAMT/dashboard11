@@ -1,5 +1,6 @@
 import { useMemo } from 'react'
 import { useRtdbValue } from './useRtdbValue'
+import { kwhSoFar } from '../lib/kwh'
 
 /**
  * The landlord view for one company: every tenant in it, in ONE listener.
@@ -31,6 +32,9 @@ export function useMallOverview(companyId, enabled = true) {
       lastSeen: typeof t?.lastSeen === 'number' ? t.lastSeen : null,
       values: t?.values || {},
       kwh: t?.kwh || null,
+      // The meter's latest reading at full precision (the sweep writes it);
+      // with `kwh` it gives "used so far" - see lib/kwh.js: kwhSoFar.
+      kwhLive: t?.kwhLive || null,
       lastAlert: t?.lastAlert || null,
     }))
   }, [node.data])
@@ -63,7 +67,10 @@ export function rankTenants(tenants, sortKey = 'attention') {
   }
   const copy = [...tenants]
   if (sortKey === 'kwh') {
-    return copy.sort((a, b) => (b.kwh?.deltaKwh ?? -1) - (a.kwh?.deltaKwh ?? -1))
+    // The running figure where a tenant has one, else its last full day -
+    // "who is using the most" should mean now when now is known.
+    const use = (t) => kwhSoFar(t.kwh, t.kwhLive)?.used ?? t.kwh?.deltaKwh ?? -1
+    return copy.sort((a, b) => use(b) - use(a))
   }
   if (sortKey === 'name') {
     return copy.sort((a, b) => a.name.localeCompare(b.name))

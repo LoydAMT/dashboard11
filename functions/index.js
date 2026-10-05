@@ -656,6 +656,13 @@ exports.alertSweep = onSchedule(
           const node = {};
           for (const d of snap.docs) node[String(d.data().t)] = d.data().tags;
           windows = parseAlertWindows(node);
+          // Said every run, because "no alerts" and "no data reaching the
+          // sweep" look identical from the alert log - and only one of them
+          // is fine. A healthy box shows 1-2 summaries, under ~3 minutes old.
+          const newest = windows.length ? windows[windows.length - 1].minute : null;
+          console.log(`alertSweep: ${device} read ${snap.size} minute summary(ies) from the live trigger` +
+            (newest ? `, newest ${Math.round((now - newest) / 1000)}s old, ` +
+              `${Object.keys(windows[windows.length - 1].byTag).length} tag(s)` : ' - NONE WAITING'));
         } else if (alertWindowTags(tagsMeta).length > 0) {
           // This box sends each minute's min/mean/max for alerting, to a node
           // nothing else reads. ONE small read replaces a history query per
@@ -768,7 +775,7 @@ exports.alertSweep = onSchedule(
           status,
           tagState: (live ? liveData.tags : state.tags) || {},
           offline: state.offline,
-          // Both already in hand from the alert evaluation above, so each
+          // Both already in hand from the alert evaluation above, so each   
           // tenant's dial arrives knowing its own zones and its own scale.
           // Without these the mall page would have to read alertRules for
           // ninety devices itself, which is the fan-out this node exists to
@@ -838,6 +845,9 @@ exports.alertSweep = onSchedule(
           // it had an hour ago, not keep them because we skipped the write.
           updates[`${base}/values`] =
             Object.keys(row.values).length > 0 ? row.values : null;
+          // The meter's latest reading, for "used so far" on the tile. Null
+          // clears it for a device with no meter, same reasoning as above.
+          updates[`${base}/kwhLive`] = row.kwhLive || null;
           // Written only when this run produced one. Not writing leaves the
           // previous alert in place, which is what "most recent" means -
           // clearing it every quiet sweep would mean the feed only ever
@@ -1127,6 +1137,10 @@ exports.kwhDailySnapshot = onSchedule(
             // trustworthy. A stale reading billed as a day's consumption is
             // the failure this whole daily-snapshot path exists to prevent.
             staleMs: rec.staleMs,
+            // When the reading in `value` was actually taken. The tile's
+            // "used so far" is the live reading minus this one, and it must
+            // know the two are different readings before subtracting.
+            readingTs: rec.readingTs,
           };
           if (typeof rec.deltaKwh === 'number' && Number.isFinite(rec.deltaKwh)) {
             total += rec.deltaKwh;
