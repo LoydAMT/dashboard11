@@ -755,7 +755,12 @@ function Masthead({
         {partners.length > 0 && (
           <div className="masthead-partners">
             {partners.map((p) => (
-              <img key={p.src} className="masthead-partner" src={p.src} alt={p.alt} />
+              <img
+                key={p.src}
+                className={`masthead-partner${p.bare ? ' masthead-partner-bare' : ''}`}
+                src={p.src}
+                alt={p.alt}
+              />
             ))}
           </div>
         )}

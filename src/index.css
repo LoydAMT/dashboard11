@@ -219,6 +219,17 @@ body {
   box-shadow: 0 0 0 1px var(--border);
 }
 
+/* A logo with a transparent background (`bare` in lib/brands.js) needs no
+   plate: it sits straight on the page and follows the theme. The vertical
+   padding stays, so it is the same height as a plated logo beside it. */
+.masthead-partner-bare {
+  background: none;
+  border-radius: 0;
+  box-shadow: none;
+  padding-left: 0;
+  padding-right: 0;
+}
+
 @media (max-width: 560px) {
   .masthead-partners { gap: 6px; padding-left: 8px; margin-left: 0; }
   .masthead-partner { height: 30px; padding: 2px 4px; }

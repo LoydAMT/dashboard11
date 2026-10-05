@@ -11,9 +11,15 @@
 // The images live in public/logo/<client>/. They are trimmed copies of the
 // originals in the same folders: the source files carry wide white margins
 // that would shrink the actual mark to a speck at header height.
+//
+// A logo is drawn on a small white plate unless it is marked `bare`, which
+// is for an image with a transparent background whose colours hold up on
+// both the light and the dark page.
 
 const AYALA_CENTRAL_BLOC = [
-  { src: '/logo/ayalamalls/ayalamalls.png', alt: 'Ayala Malls Central Bloc' },
+  // ?v= because the file was replaced in place (it used to be on white), and
+  // a browser holding the old one would keep showing a white box.
+  { src: '/logo/ayalamalls/ayalamalls.png?v=2', alt: 'Ayala Malls Central Bloc', bare: true },
 ]
 
 const DEVICE_BRANDS = {
