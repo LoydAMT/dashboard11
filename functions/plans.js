@@ -16,12 +16,15 @@
 //
 // What Premium adds, and what refuses it on Standard:
 //   history older than what RTDB still holds   readArchive
-//   the searchable alert history               readAlerts
 //   billing (the guide's "tenants billed from   billingApi, billingSend
 //     these readings")
 //   separate tenant logins                     projectCompanyAccess
 //   per-second detail, weekly/monthly totals   the dashboard only - see
 //                                              src/lib/plans.js for why
+//
+// The searchable alert history (readAlerts) was on that list and no longer
+// is: since 6 October 2026 it is part of Standard, for one meter and for a
+// whole company alike.
 //
 // Admins are Instrubyte staff and are never limited by a customer's plan.
 

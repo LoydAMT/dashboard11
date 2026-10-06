@@ -153,8 +153,7 @@ export function MallOverview({
           <div className="mall-recent-head">
             <h3>Recent alerts</h3>
             {/* The strip is each tenant's LATEST event only. The full log
-                is a different thing and says so - and is Premium, so on
-                Standard there is no link to it. */}
+                is a different thing and says so. */}
             {onOpenLog && (
               <button type="button" className="mall-recent-all" onClick={onOpenLog}>
                 View all alerts →

@@ -8,9 +8,10 @@
 //
 // Two kinds of gate here, and the difference matters:
 //
-//   The archive, the alert history and billing are served by Cloud
-//   Functions that check the plan themselves. Hiding them here only spares
-//   a Standard company a button that would be refused.
+//   The archive and billing are served by Cloud Functions that check the
+//   plan themselves. Hiding them here only spares a Standard company a
+//   button that would be refused. (The alert history is NOT one of them:
+//   it is on every plan.)
 //
 //   Per-second detail (the Raw ranges) and the weekly/monthly kWh totals
 //   are hidden HERE ONLY. Their data sits under devices/{id}/history, which

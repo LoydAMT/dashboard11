@@ -117,7 +117,8 @@ function Dashboard() {
   // than staying on one the plan does not include. See lib/plans.js.
   const companyPlan = useRtdbValue(mallView ? `companies/${mallView.id}/plan` : null, Boolean(mallView))
   const companyPremium = hasPremium(companyPlan.data, isAdmin)
-  const mallPageShown = companyPremium ? mallPage : 'wall'
+  // Billing is the one Premium page; the alert log is on every plan.
+  const mallPageShown = mallPage === 'billing' && !companyPremium ? 'wall' : mallPage
 
   // The friendly name for whichever device is selected, if one has been set
   // at /naming - falls back to the raw id on its own, so every call site
@@ -163,8 +164,8 @@ function Dashboard() {
   // refused or missing read is Standard, never an error on screen.
   const devicePlan = useRtdbValue(deviceId ? `devices/${deviceId}/plan` : null, ready)
   const premium = hasPremium(devicePlan.data, isAdmin)
-  // The searchable alert history is Premium; the bell and toasts are not.
-  const alertHistoryOpen = showAlertHistory && premium
+  // The searchable alert history is on every plan, like the bell and toasts.
+  const alertHistoryOpen = showAlertHistory
 
   const now = useNow(1000)
 
@@ -396,7 +397,7 @@ function Dashboard() {
         onSwitchDevice={() => setChosenDeviceId(null)}
         alertLog={ready ? alertCenter.log : EMPTY_LOG}
         onClearAlerts={alertCenter.clearLog}
-        onOpenHistory={premium ? () => setShowAlertHistory(true) : null}
+        onOpenHistory={() => setShowAlertHistory(true)}
         nowMs={now}
       />
 
@@ -463,7 +464,7 @@ function Dashboard() {
           companyName={mallView.name}
           nowMs={now}
           onOpenDevice={(id) => { setChosenDeviceId(id); setMallView(null) }}
-          onOpenLog={companyPremium ? () => setMallPage('log') : null}
+          onOpenLog={() => setMallPage('log')}
           onOpenBilling={companyPremium ? () => setMallPage('billing') : null}
           premium={companyPremium}
           onClose={() => setMallView(null)}

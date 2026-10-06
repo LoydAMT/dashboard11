@@ -18,8 +18,8 @@ const { PREMIUM, planOf, isTenantCompany } = require('./plans');
 //   userCompanies/{uid}/{companyId}    = true
 //   devices/{deviceId}/plan            = "premium" | "standard"
 //
-// The plan is projected for the same reason as the grants: readArchive,
-// readAlerts and the dashboard need "is this meter on Premium" as one
+// The plan is projected for the same reason as the grants: readArchive
+// and the dashboard need "is this meter on Premium" as one
 // lookup, not a walk over every company that might hold it. See plans.js.
 //
 // It is a FULL recompute from companies/ on every run, not a delta. A delta
