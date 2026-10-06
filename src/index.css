@@ -2168,6 +2168,82 @@ body {
 /* Company grouping in the device picker. Only rendered when an account
    belongs to at least one company - an admin, whose access comes from
    admins/ rather than membership, still sees the flat list above. */
+/* A mall in the picker: one row that opens its overview, with its tenants
+   folded away under a toggle (components/DevicePicker.jsx). */
+.picker-mall {
+  margin-top: 10px;
+  border: 1px solid var(--border-strong);
+  border-left: 3px solid var(--accent);
+  border-radius: 10px;
+  background: var(--surface);
+  overflow: hidden;
+}
+
+.picker-mall-row { display: flex; align-items: stretch; }
+
+.picker-mall-open,
+.picker-mall-toggle {
+  font: inherit;
+  color: var(--text);
+  background: none;
+  border: 0;
+  cursor: pointer;
+  min-height: 52px;
+}
+
+.picker-mall-open {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 1px;
+  text-align: left;
+  padding: 9px 14px;
+}
+
+.picker-mall-solo {
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.picker-mall-name { font-size: .95rem; font-weight: 620; overflow-wrap: anywhere; }
+.picker-mall-hint { font-size: .76rem; color: var(--accent); }
+
+.picker-mall-toggle,
+.picker-mall-count {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex: none;
+  font-size: .8rem;
+  font-weight: 560;
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+
+.picker-mall-toggle {
+  padding: 0 14px;
+  border-left: 1px solid var(--border);
+}
+
+.picker-mall-open:hover,
+.picker-mall-toggle:hover { background: var(--surface-2); }
+.picker-mall-open:focus-visible,
+.picker-mall-toggle:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+
+.picker-chevron { transition: transform .15s; }
+.picker-mall.is-open .picker-chevron { transform: rotate(180deg); }
+
+.picker-mall-list {
+  margin-top: 0;
+  padding: 10px;
+  border-top: 1px solid var(--border);
+  background: var(--surface-2);
+}
+
 .device-picker-group { margin-top: 1rem; }
 .device-picker-group:first-of-type { margin-top: 0.5rem; }
 

@@ -128,6 +128,10 @@ function Dashboard() {
   // real, authorized-somewhere account can still have no device selected yet
   // (the picker is showing) or lack access to this specific one.
   const ready = Boolean(deviceId)
+  // Several devices and none chosen yet: the picker is the page.
+  const pickerShown = !mallView && resolved && realUser && !deviceAccess.loading
+    && deviceAccess.devices.length > 1 && !deviceId
+  const openMall = (cid, cname) => { setMallView({ id: cid, name: cname }); setMallPage('wall') }
   // Viewer and operator are equivalent for *reading* telemetry (`ready`
   // above doesn't distinguish them), but not for VFD control: only an
   // operator, or a global admin regardless of their per-device role, may
@@ -419,11 +423,12 @@ function Dashboard() {
         <NotAuthorized email={user?.email} onSignOut={signOutUser} />
       )}
 
-      {!mallView && resolved && realUser && !deviceAccess.loading && deviceAccess.devices.length > 1 && !deviceId && (
+      {pickerShown && (
         <DevicePicker
           devices={deviceAccess.devices}
           companyIds={companies.companyIds}
           onSelect={setChosenDeviceId}
+          onOpenMall={openMall}
         />
       )}
 
@@ -466,15 +471,13 @@ function Dashboard() {
       )}
 
       {/* One entry per company the account belongs to; each renders nothing
-          unless that company holds more than one device. */}
-      {!mallView && resolved && realUser && companies.companyIds.length > 0 && (
+          unless that company holds more than one device. Not beside the
+          picker: there each mall is already a row of its own, and a second
+          link to the same page underneath is just more to read. */}
+      {!mallView && !pickerShown && resolved && realUser && companies.companyIds.length > 0 && (
         <div className="mall-entries">
           {companies.companyIds.map((id) => (
-            <MallEntry
-              key={id}
-              companyId={id}
-              onOpen={(cid, cname) => { setMallView({ id: cid, name: cname }); setMallPage('wall') }}
-            />
+            <MallEntry key={id} companyId={id} onOpen={openMall} />
           ))}
         </div>
       )}

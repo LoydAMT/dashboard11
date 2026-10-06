@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useId, useState } from 'react'
 import { useDeviceName } from '../hooks/useDeviceName'
 import { useCompany } from '../hooks/useCompanies'
 
@@ -6,7 +6,11 @@ import { useCompany } from '../hooks/useCompanies'
  * Shown only when an account has access to more than one device - the common
  * case (exactly one) skips this entirely and goes straight to the dashboard.
  *
- * Devices are grouped by company when the account belongs to any. Grouping is
+ * Devices are grouped by company when the account belongs to any. A company
+ * with several meters - a mall - is ONE row: its name opens the overview of
+ * all its tenants, and the tenants themselves sit in a list that stays folded
+ * away until asked for. An account in a few malls would otherwise open onto
+ * a wall of every tenant of every one of them. Grouping is
  * presentation only: `devices` is still the authoritative list, from
  * access/{uid}, and a device is never shown because a company claims it -
  * only because the account actually has it. That ordering matters. If the
@@ -23,7 +27,7 @@ import { useCompany } from '../hooks/useCompanies'
  * renamed the id does not appear anywhere in the UI. The id still lives on
  * in every path, rule and export filename, just not on screen.
  */
-export function DevicePicker({ devices, companyIds = [], onSelect }) {
+export function DevicePicker({ devices, companyIds = [], onSelect, onOpenMall }) {
   const grouped = companyIds.length > 0
 
   return (
@@ -32,7 +36,12 @@ export function DevicePicker({ devices, companyIds = [], onSelect }) {
       <p>This account has access to more than one.</p>
 
       {grouped ? (
-        <CompanyGroups devices={devices} companyIds={companyIds} onSelect={onSelect} />
+        <CompanyGroups
+          devices={devices}
+          companyIds={companyIds}
+          onSelect={onSelect}
+          onOpenMall={onOpenMall}
+        />
       ) : (
         <div className="device-picker-list">
           {devices.map((d) => (
@@ -44,7 +53,7 @@ export function DevicePicker({ devices, companyIds = [], onSelect }) {
   )
 }
 
-function CompanyGroups({ devices, companyIds, onSelect }) {
+function CompanyGroups({ devices, companyIds, onSelect, onOpenMall }) {
   const allowed = new Set(devices.map((d) => d.id))
 
   // Which devices each company claims, reported upward by the groups
@@ -78,6 +87,7 @@ function CompanyGroups({ devices, companyIds, onSelect }) {
           companyId={id}
           allowed={allowed}
           onSelect={onSelect}
+          onOpenMall={onOpenMall}
           onDevices={report}
         />
       ))}
@@ -103,8 +113,12 @@ function CompanyGroups({ devices, companyIds, onSelect }) {
 // its own companies/{id} subscription - one hook call per company, which a
 // loop body cannot do without breaking the rule that a component's hook calls
 // happen in the same order every render. Same reason DevicePickerItem exists.
-function CompanyGroup({ companyId, allowed, onSelect, onDevices }) {
-  const { name, deviceIds } = useCompany(companyId)
+function CompanyGroup({ companyId, allowed, onSelect, onOpenMall, onDevices }) {
+  const { name, deviceIds, tenant } = useCompany(companyId)
+  // Folded by default: the point of the row is that the tenants are NOT all
+  // on screen until someone wants one of them.
+  const [open, setOpen] = useState(false)
+  const listId = useId()
 
   // Report what this company claims, so the parent can work out which
   // devices no company covers. Reported even when the intersection below is
@@ -120,18 +134,81 @@ function CompanyGroup({ companyId, allowed, onSelect, onDevices }) {
   const visible = deviceIds.filter((id) => allowed.has(id))
   if (visible.length === 0) return null
 
-  return (
-    <div className="device-picker-group">
-      <h3 className="device-picker-group-name">{name}</h3>
+  // One meter is not a mall. It gets its own button, with nothing to unfold.
+  if (visible.length === 1) {
+    return (
       <div className="device-picker-list">
-        {visible.map((id) => (
-          <DevicePickerItem key={id} deviceId={id} onSelect={onSelect} />
-        ))}
+        <DevicePickerItem deviceId={visible[0]} onSelect={onSelect} />
       </div>
+    )
+  }
+
+  // The same test MallEntry applies: the overview exists for a company with
+  // several meters that is not one tenant's own login (the rules refuse that
+  // one the wall). Without it the name can only unfold the list.
+  const hasWall = Boolean(onOpenMall) && !tenant && deviceIds.length >= 2
+  const count = `${visible.length} ${hasWall ? 'tenants' : 'meters'}`
+  const toggle = () => setOpen((v) => !v)
+
+  return (
+    <div className={`picker-mall${open ? ' is-open' : ''}`}>
+      <div className="picker-mall-row">
+        {hasWall ? (
+          <>
+            <button
+              type="button"
+              className="picker-mall-open"
+              onClick={() => onOpenMall(companyId, name)}
+              title={`Open ${name}`}
+            >
+              <span className="picker-mall-name">{name}</span>
+              <span className="picker-mall-hint">All tenants on one page →</span>
+            </button>
+            <button
+              type="button"
+              className="picker-mall-toggle"
+              aria-expanded={open}
+              aria-controls={listId}
+              onClick={toggle}
+            >
+              {count}
+              <Chevron />
+            </button>
+          </>
+        ) : (
+          <button
+            type="button"
+            className="picker-mall-open picker-mall-solo"
+            aria-expanded={open}
+            aria-controls={listId}
+            onClick={toggle}
+          >
+            <span className="picker-mall-name">{name}</span>
+            <span className="picker-mall-count">{count}<Chevron /></span>
+          </button>
+        )}
+      </div>
+
+      {open && (
+        <div className="device-picker-list picker-mall-list" id={listId}>
+          {visible.map((id) => (
+            <DevicePickerItem key={id} deviceId={id} onSelect={onSelect} />
+          ))}
+        </div>
+      )}
     </div>
   )
 }
 
+/** Points down when folded; CSS turns it over when the list is open. */
+function Chevron() {
+  return (
+    <svg className="picker-chevron" viewBox="0 0 12 12" width="12" height="12" aria-hidden="true">
+      <path d="M2.5 4.5 6 8l3.5-3.5" fill="none" stroke="currentColor" strokeWidth="1.6"
+            strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  )
+}
 
 function DevicePickerItem({ deviceId, onSelect }) {
   const { name } = useDeviceName(deviceId)
