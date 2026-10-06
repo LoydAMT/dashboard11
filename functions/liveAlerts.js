@@ -146,9 +146,82 @@ function createAccumulator() {
   };
 }
 
+const BOX_KINDS = new Set(['alarm-high', 'alarm-low', 'alarm-clear', 'alarm-reset', 'spike']);
+
+/**
+ * One alert reported by a box that evaluates its own (alertEvents/{device}).
+ *
+ * The box says WHAT happened; this decides whether it is news. A box
+ * restates where every tag stands after a restart, because it cannot know
+ * what it reported before - so "above its limit" from a tag already recorded
+ * as above is not a second alert, and "back to normal" from a tag that was
+ * never out is not an alert at all. `prev` is the state last recorded here.
+ *
+ *   alarm-high / alarm-low   crossed a limit
+ *   alarm-clear              back inside its limits
+ *   alarm-reset              the tag has no limit any more: settle it as ok,
+ *                            and record nothing, since nothing happened to
+ *                            the reading
+ *   spike                    always recorded; it carries no state
+ *
+ * The wording is built here rather than taken from the box, so an alert
+ * reads the same whichever side raised it.
+ *
+ * @returns { next, alert } - next is undefined when the state is untouched;
+ *          alert is null when there is nothing to record. null overall for
+ *          an event that makes no sense.
+ */
+function boxEventToAlert({ device, ev, prev = 'ok' }) {
+  if (!ev || typeof ev !== 'object' || !BOX_KINDS.has(ev.kind)) return null;
+  if (typeof ev.tagKey !== 'string' || !ev.tagKey || !isNum(ev.ts)) return null;
+
+  const tagKey = ev.tagKey;
+  const tagName = (typeof ev.tagName === 'string' && ev.tagName) || tagKey;
+  const base = { ts: ev.ts, device, tagKey, tagName };
+  if (isNum(ev.value)) base.value = ev.value;
+
+  if (ev.kind === 'spike') {
+    return {
+      next: undefined,
+      alert: {
+        ...base, kind: 'spike', level: 'warning',
+        message: `${tagName} jumped well outside its recent range`,
+      },
+    };
+  }
+
+  if (ev.kind === 'alarm-reset') return { next: 'ok', alert: null };
+
+  if (ev.kind === 'alarm-clear') {
+    if (prev === 'ok') return { next: 'ok', alert: null };
+    return {
+      next: 'ok',
+      alert: {
+        ...base, kind: 'alarm-clear', level: 'info',
+        message: `${tagName} back within its normal range`,
+      },
+    };
+  }
+
+  const next = ev.kind === 'alarm-high' ? 'high' : 'low';
+  if (prev === next) return { next, alert: null };
+  const alert = {
+    ...base, kind: ev.kind, level: 'critical',
+    message: `${tagName} ${next === 'high' ? 'above its alert threshold' : 'below its alert threshold'}`,
+  };
+  if (isNum(ev.limit)) alert.limit = ev.limit;   // stored key kept for older records
+  return { next, alert };
+}
+
+/** The worst of a device's tag states, as the overview shows it. */
+function worstAlarm(tags = {}) {
+  const states = Object.values(tags || {});
+  return states.includes('high') ? 'high' : states.includes('low') ? 'low' : 'ok';
+}
+
 /** Function export name for a device's trigger: letters, digits, underscore. */
 function triggerName(device) {
   return `liveAlerts_${String(device).replace(/[^A-Za-z0-9]/g, '_')}`;
 }
 
-module.exports = { thresholdStep, createAccumulator, triggerName };
+module.exports = { thresholdStep, createAccumulator, triggerName, boxEventToAlert, worstAlarm };

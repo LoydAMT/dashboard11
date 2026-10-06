@@ -431,6 +431,26 @@ function parseAlertWindows(node) {
   return out.sort((a, b) => a.minute - b.minute);
 }
 
+/**
+ * Tags whose BOX works out their alerts itself (tags/{key}/boxAlerts).
+ *
+ * Such a box compares every one-second reading with its limits and runs the
+ * spike test when each minute closes, then reports what it found to
+ * alertEvents/ (see liveAlerts.js: boxEventToAlert). For that device the
+ * sweep must do neither - two evaluators would each record the same
+ * crossing - and keeps only what a box cannot do for itself: noticing that
+ * the box has gone quiet.
+ *
+ * Read from the flag the box publishes, never from a list here: a box that
+ * is reflashed with alerts switched off stops publishing it, and the sweep
+ * takes the work back without a deploy.
+ */
+function boxAlertTags(tagsMeta = {}) {
+  return Object.entries(tagsMeta || {})
+    .filter(([, m]) => m && m.boxAlerts === true)
+    .map(([k]) => k);
+}
+
 /** Per-tag spike floors from tags/ metadata. See SPIKE_DEADBAND_STEPS. */
 function spikeFloorsFromTags(tagsMeta = {}) {
   const floors = {};
@@ -451,6 +471,6 @@ function alertId(ev) {
 
 module.exports = {
   evaluate, classify, isSpike, alertId, withLiveWindow,
-  alertWindowTags, parseAlertWindows, spikeFloorsFromTags,
+  alertWindowTags, parseAlertWindows, spikeFloorsFromTags, boxAlertTags,
   DEFAULT_OFFLINE_AFTER_MS, SPIKE_DEADBAND_STEPS,
 };

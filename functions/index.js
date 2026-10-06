@@ -2,7 +2,7 @@
 
 const { onRequest } = require('firebase-functions/v2/https');
 const { onSchedule } = require('firebase-functions/v2/scheduler');
-const { onValueWritten } = require('firebase-functions/v2/database');
+const { onValueWritten, onValueCreated } = require('firebase-functions/v2/database');
 const { defineSecret } = require('firebase-functions/params');
 const { initializeApp, getApps } = require('firebase-admin/app');
 const { getFirestore, FieldValue } = require('firebase-admin/firestore');
@@ -15,10 +15,32 @@ const { createSweep, hourOf, HOUR_MS } = require('./archiveSweep');
 const { computeProjection, toUpdates } = require('./projectCompanyAccess');
 const {
   evaluate: evaluateAlerts, alertId, withLiveWindow,
-  alertWindowTags, parseAlertWindows, spikeFloorsFromTags,
+  alertWindowTags, parseAlertWindows, spikeFloorsFromTags, boxAlertTags,
 } = require('./alertEngine');
 
-const { thresholdStep, createAccumulator, triggerName } = require('./liveAlerts');
+const {
+  thresholdStep, createAccumulator, triggerName, boxEventToAlert, worstAlarm,
+} = require('./liveAlerts');
+
+// How many devices alertSweep works on at once. A device's turn is almost
+// all WAITING - on the database, then on Firestore - so taking them one
+// after another made a run last 0.4 s per device and billed a whole CPU for
+// every second of it. Nothing is shared between two devices' turns except
+// the `rows` map, each under its own key.
+const SWEEP_CONCURRENCY = 12;
+
+/** Runs fn over items, at most `size` at a time. fn must not throw. */
+async function inParallel(items, size, fn) {
+  let next = 0;
+  const worker = async () => {
+    while (next < items.length) {
+      const item = items[next];
+      next += 1;
+      await fn(item);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(size, items.length) }, worker));
+}
 
 // Most minute summaries one sweep will take from alertWindows/{device}. A
 // healthy box has two waiting; this only bites after an outage, where it
@@ -573,6 +595,97 @@ for (const device of LIVE_ALERT_DEVICES) {
 }
 
 // ---------------------------------------------------------------------------
+//  Alerts reported by a box that evaluates its own
+// ---------------------------------------------------------------------------
+//
+// Such a box (tags/{key}/boxAlerts, see alertEngine.js: boxAlertTags) checks
+// every reading against its limits itself and writes what it finds to
+// alertEvents/{device}/{eventId}, in the same request as the reading. This
+// files it: the alert log lives in Firestore, which a box cannot write to.
+//
+// It runs only when something actually happened - a handful of times a day
+// on a healthy site - which is the whole difference from a trigger on every
+// reading (liveAlerts above) or a check of every meter every two minutes.
+//
+// The read-decide-write is one Firestore transaction on the device's state
+// document. A box restating its state after a restart sends several events
+// at once, and two of them deciding against the same stale state would file
+// the same crossing twice.
+exports.boxAlertEvent = onValueCreated(
+  { ...TRIGGER_OPTS, ref: '/alertEvents/{device}/{eventId}' },
+  async (event) => {
+    const { device, eventId } = event.params;
+    const rtdb = getDatabase();
+    const fs = getFirestore();
+    const node = rtdb.ref(`alertEvents/${device}/${eventId}`);
+    const ev = event.data.val();
+
+    // Judged against no state first, only to throw out an event that makes
+    // no sense before anything is read for it.
+    if (!boxEventToAlert({ device, ev })) {
+      console.warn(`boxAlertEvent: ${device}/${eventId} ignored - not a usable event`);
+      await node.remove();
+      return;
+    }
+
+    const companies = (await rtdb.ref('companies').once('value')).val() || {};
+    const owning = companiesByDevice(companies)[device] || [];
+    const stateRef = fs.collection('alertLive').doc(device);
+
+    let filed = null;
+    let tagsAfter = null;
+    await fs.runTransaction(async (tx) => {
+      const snap = await tx.get(stateRef);
+      const tags = (snap.exists && snap.data().tags) || {};
+      const { next, alert } = boxEventToAlert({ device, ev, prev: tags[ev.tagKey] || 'ok' });
+
+      filed = alert;
+      tagsAfter = next === undefined ? tags : { ...tags, [ev.tagKey]: next };
+
+      const patch = {};
+      if (next !== undefined && tags[ev.tagKey] !== next) patch.tags = { [ev.tagKey]: next };
+      if (alert) {
+        // Deterministic id + set(): the database delivers at least once, and
+        // a second delivery overwrites with identical content.
+        tx.set(fs.collection('devices').doc(device).collection('alerts').doc(alertId(alert)), {
+          ...alert, companies: owning, recordedAt: FieldValue.serverTimestamp(),
+        });
+        patch.lastAlert = {
+          ts: alert.ts, kind: alert.kind, level: alert.level || 'info', message: alert.message,
+        };
+      }
+      if (Object.keys(patch).length > 0) tx.set(stateRef, patch, { merge: true });
+    });
+
+    if (filed) {
+      console.log(`boxAlertEvent: ${device} -> ${filed.kind} ${filed.tagKey}` +
+        (filed.value !== undefined ? ` = ${filed.value}` : ''));
+      // The landlord's page, now rather than on the next sweep: the tenant's
+      // newest alert and, for a limit, its colour.
+      try {
+        const updates = {};
+        for (const companyId of overviewCompanies(companies)) {
+          if (!owning.includes(companyId)) continue;
+          const base = `mallOverview/${companyId}/tenants/${device}`;
+          updates[`${base}/lastAlert`] = {
+            ts: filed.ts, kind: filed.kind, level: filed.level || 'info', message: filed.message,
+          };
+          if (filed.kind !== 'spike') updates[`${base}/alarm`] = worstAlarm(tagsAfter);
+        }
+        if (Object.keys(updates).length > 0) await rtdb.ref().update(updates);
+      } catch (err) {
+        // A convenience view; the alert itself is already filed.
+        console.error(`boxAlertEvent: ${device} overview update failed`, err);
+      }
+    }
+
+    // Last, so a failure anywhere above leaves the event to be delivered
+    // again rather than losing it.
+    await node.remove();
+  },
+);
+
+// ---------------------------------------------------------------------------
 //  Alerts
 // ---------------------------------------------------------------------------
 
@@ -609,7 +722,7 @@ exports.alertSweep = onSchedule(
     // own.
     const rows = {};
 
-    for (const device of sweepDevices) {
+    await inParallel(sweepDevices, SWEEP_CONCURRENCY, async (device) => {
       try {
         // A device on the instant path (see LIVE_ALERT_DEVICES) has its
         // thresholds evaluated by its trigger the moment a reading lands.
@@ -638,6 +751,12 @@ exports.alertSweep = onSchedule(
 
         const tagNames = {};
         for (const [k, m] of Object.entries(tagsMeta)) tagNames[k] = (m && m.name) || k;
+
+        // This box checks its own limits and spikes and reports them itself
+        // (boxAlertEvent above). What is left for this sweep is the one
+        // thing a box cannot do - notice that it has gone quiet - and the
+        // landlord's overview.
+        const boxAlerts = boxAlertTags(tagsMeta).length > 0;
 
         let windows;
         // Minute keys read from alertWindows/, so exactly those - and nothing
@@ -711,9 +830,14 @@ exports.alertSweep = onSchedule(
         }
 
         const { events, state } = evaluateAlerts({
-          device, windows, rules, tagNames, prevState, status, now,
+          // No minutes for a box that judges its own: with nothing to walk,
+          // the engine evaluates neither limits nor spikes and returns only
+          // the offline verdict. The minutes read above are still used, by
+          // the overview, for the range a dial is scaled to.
+          device, windows: boxAlerts ? [] : windows,
+          rules, tagNames, prevState, status, now,
           spikeFloors: spikeFloorsFromTags(tagsMeta),
-          thresholds: !live,
+          thresholds: !live && !boxAlerts,
         });
 
         if (events.length > 0) {
@@ -745,7 +869,15 @@ exports.alertSweep = onSchedule(
         // State is written AFTER the alerts, so a crash in between re-runs
         // the same window and re-writes the same deterministic ids rather
         // than losing the events entirely.
-        await fs.collection('alertState').doc(device).set(state, { merge: true });
+        //
+        // For a box that judges its own alerts the only thing in here that
+        // can change is whether it is offline, so the write is skipped while
+        // that stays the same - which is nearly every run of every day.
+        const settled = boxAlerts && stateDoc.exists
+          && Boolean(prevState.offline) === Boolean(state.offline);
+        if (!settled) {
+          await fs.collection('alertState').doc(device).set(state, { merge: true });
+        }
 
         // The summaries have done their job: any alert they produced is in
         // Firestore and the watermark is saved. Deleting them is what keeps
@@ -773,7 +905,9 @@ exports.alertSweep = onSchedule(
           name: nameSnap.val(),
           latest: latestSnap.val(),
           status,
-          tagState: (live ? liveData.tags : state.tags) || {},
+          // A box that judges its own alerts keeps each tag's state on its
+          // status node, already in hand here - no extra read.
+          tagState: (boxAlerts ? status.alarms : live ? liveData.tags : state.tags) || {},
           offline: state.offline,
           // Both already in hand from the alert evaluation above, so each   
           // tenant's dial arrives knowing its own zones and its own scale.
@@ -819,7 +953,7 @@ exports.alertSweep = onSchedule(
         // One device failing must not stop the rest.
         console.error(`alertSweep: ${device} failed`, err);
       }
-    }
+    });
 
     // One node per multi-device company. Written as a multi-path update
     // touching only the fields this sweep owns, so the daily kWh figures

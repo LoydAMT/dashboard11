@@ -1501,6 +1501,162 @@ test('alertEngine: spike baseline survives a restart via stored state', () => {
     'a restart should not need 8 fresh minutes before it can detect again');
 });
 
+// --- alerts reported by a box that evaluates its own ---------------------
+
+const { boxEventToAlert, worstAlarm } = require('./liveAlerts');
+const { boxAlertTags } = require('./alertEngine');
+
+// Feeds box events through boxEventToAlert the way the trigger does, carrying
+// each tag's recorded state forward.
+function fileBoxEvents(events, start = {}) {
+  const tags = { ...start };
+  const filed = [];
+  for (const ev of events) {
+    const r = boxEventToAlert({ device: 'ayala-box1-2', ev, prev: tags[ev.tagKey] || 'ok' });
+    if (!r) continue;
+    if (r.next !== undefined) tags[ev.tagKey] = r.next;
+    if (r.alert) filed.push(r.alert);
+  }
+  return { filed, tags };
+}
+
+const boxEv = (kind, extra = {}) => ({
+  ts: T0, tagKey: 'Current', tagName: 'Current', kind, value: 20, ...extra,
+});
+
+test('boxAlerts: a crossing reported by the box is filed like one the server found', () => {
+  const { filed, tags } = fileBoxEvents([boxEv('alarm-high', { limit: 16 })]);
+  assert.equal(filed.length, 1);
+  assert.deepEqual(filed[0], {
+    ts: T0, device: 'ayala-box1-2', tagKey: 'Current', tagName: 'Current', value: 20,
+    kind: 'alarm-high', level: 'critical', limit: 16,
+    message: 'Current above its alert threshold',
+  });
+  assert.equal(tags.Current, 'high');
+  // Same id scheme as every other alert, so a second delivery overwrites.
+  assert.equal(alertId(filed[0]), `${T0}_Current_alarm-high`);
+});
+
+test('boxAlerts: a box restating its state after a restart files nothing new', () => {
+  // Already recorded as high; the restarted box says "high" again.
+  const again = fileBoxEvents([boxEv('alarm-high', { limit: 16 })], { Current: 'high' });
+  assert.equal(again.filed.length, 0);
+  assert.equal(again.tags.Current, 'high');
+  // Never out of range; the restarted box says "ok".
+  const fine = fileBoxEvents([boxEv('alarm-clear', { value: 5 })]);
+  assert.equal(fine.filed.length, 0);
+  assert.equal(fine.tags.Current, 'ok');
+});
+
+test('boxAlerts: a clearing that happened while the box was off is still recorded', () => {
+  const { filed, tags } = fileBoxEvents([boxEv('alarm-clear', { value: 5 })], { Current: 'high' });
+  assert.equal(filed.length, 1);
+  assert.equal(filed[0].kind, 'alarm-clear');
+  assert.equal(filed[0].level, 'info');
+  assert.equal(filed[0].message, 'Current back within its normal range');
+  assert.equal(tags.Current, 'ok');
+});
+
+test('boxAlerts: high, clear, low, straight to high - four alerts, in order', () => {
+  const { filed, tags } = fileBoxEvents([
+    boxEv('alarm-high', { ts: T0, limit: 16 }),
+    boxEv('alarm-clear', { ts: T0 + 20000, value: 5 }),
+    boxEv('alarm-low', { ts: T0 + 40000, value: 0.2, limit: 1 }),
+    boxEv('alarm-high', { ts: T0 + 41000, value: 30, limit: 16 }),
+  ]);
+  assert.deepEqual(filed.map((a) => a.kind), ['alarm-high', 'alarm-clear', 'alarm-low', 'alarm-high']);
+  assert.equal(filed[2].limit, 1);
+  assert.equal(filed[2].message, 'Current below its alert threshold');
+  assert.equal(tags.Current, 'high');
+});
+
+test('boxAlerts: a limit that was removed settles the tag and records nothing', () => {
+  const { filed, tags } = fileBoxEvents([boxEv('alarm-reset')], { Current: 'high' });
+  assert.equal(filed.length, 0);
+  assert.equal(tags.Current, 'ok');
+});
+
+test('boxAlerts: a spike is recorded and leaves the limit state alone', () => {
+  const r = boxEventToAlert({
+    device: 'ayala-box1-3',
+    ev: { ts: T0, tagKey: 'Voltage', tagName: 'Voltage', kind: 'spike', value: 260 },
+    prev: 'high',
+  });
+  assert.equal(r.next, undefined);
+  assert.equal(r.alert.kind, 'spike');
+  assert.equal(r.alert.level, 'warning');
+  assert.equal(r.alert.message, 'Voltage jumped well outside its recent range');
+  assert.equal('limit' in r.alert, false);
+});
+
+test('boxAlerts: an event that makes no sense is refused, not filed', () => {
+  assert.equal(boxEventToAlert({ device: 'd', ev: null }), null);
+  assert.equal(boxEventToAlert({ device: 'd', ev: { ts: T0, tagKey: 'Current', kind: 'offline' } }), null);
+  assert.equal(boxEventToAlert({ device: 'd', ev: { ts: T0, kind: 'alarm-high' } }), null);
+  assert.equal(boxEventToAlert({ device: 'd', ev: { ts: 'soon', tagKey: 'Current', kind: 'spike' } }), null);
+});
+
+test('boxAlerts: the wording comes from the server, whatever the box sent', () => {
+  const r = boxEventToAlert({
+    device: 'd',
+    ev: { ts: T0, tagKey: 'd_Flow', kind: 'alarm-low', value: 1, limit: 2, message: 'pwned', level: 'info' },
+  });
+  // No tagName sent: the key stands in. The box's own message and level are ignored.
+  assert.equal(r.alert.message, 'd_Flow below its alert threshold');
+  assert.equal(r.alert.level, 'critical');
+});
+
+test('boxAlerts: the overview shows the worst tag state', () => {
+  assert.equal(worstAlarm({ Current: 'ok', Voltage: 'low' }), 'low');
+  assert.equal(worstAlarm({ Current: 'high', Voltage: 'low' }), 'high');
+  assert.equal(worstAlarm({}), 'ok');
+  assert.equal(worstAlarm(undefined), 'ok');
+});
+
+test('boxAlerts: only a box that says so is treated as judging its own alerts', () => {
+  assert.deepEqual(boxAlertTags({
+    Current: { name: 'Current', boxAlerts: true },
+    Voltage: { name: 'Voltage', boxAlerts: true },
+    kWh: { name: 'kWh' },
+  }), ['Current', 'Voltage']);
+  assert.deepEqual(boxAlertTags({ Current: { name: 'Current', boxAlerts: 'yes' } }), []);
+  assert.deepEqual(boxAlertTags({ Current: { name: 'Current', minuteAlerts: true } }), []);
+  assert.deepEqual(boxAlertTags(null), []);
+});
+
+test('boxAlerts: for such a box the sweep is left with offline, and nothing else', () => {
+  // What alertSweep hands the engine for a box that judges its own alerts:
+  // no minutes, thresholds off. A reading far past its limit and a wild
+  // minute must both go unreported here - the box reports those.
+  const prevState = { tags: { Current: 'ok' }, buffers: { Current: { hi: [1, 2], lo: [1, 2] } }, lastMinute: T0 };
+  const quiet = evaluate({
+    device: 'ayala-box1-2',
+    windows: [],
+    rules: { Current: { hi: 16 } },
+    prevState,
+    status: { lastSeen: T0 + 10 * M },
+    now: T0 + 10 * M + 5000,
+    thresholds: false,
+  });
+  assert.deepEqual(quiet.events, []);
+  assert.equal(quiet.state.offline, false);
+  // Nothing it does not own is disturbed.
+  assert.deepEqual(quiet.state.tags, prevState.tags);
+  assert.equal(quiet.state.lastMinute, T0);
+
+  const gone = evaluate({
+    device: 'ayala-box1-2',
+    windows: [],
+    rules: { Current: { hi: 16 } },
+    prevState,
+    status: { lastSeen: T0 },
+    now: T0 + 10 * M,
+    thresholds: false,
+  });
+  assert.deepEqual(gone.events.map((e) => e.kind), ['offline']);
+  assert.equal(gone.state.offline, true);
+});
+
 // --- kwhSnapshot: TEMPORARY daily meter reading -------------------------
 //
 // The properties that matter for something a bill might be built on: never

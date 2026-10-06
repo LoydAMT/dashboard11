@@ -368,6 +368,15 @@
       ".write": false
     },
 
+    // Alerts found by a box that evaluates its own (functions/index.js:
+    // boxAlertEvent). The box writes one here with the database secret; the
+    // function files it in Firestore and removes it within a second or two.
+    // Closed to every client for the same reason as alertWindows.
+    "alertEvents": {
+      ".read": false,
+      ".write": false
+    },
+
     // Tags whose dashboard dial an admin has switched off - a totalizer, say,
     // where a dial scaled to recent readings says nothing the number does not
     // (components/GaugeDisplay.jsx). Only "off" is stored; a tag that is not
