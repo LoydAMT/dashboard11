@@ -2646,3 +2646,114 @@ test('billingApi: refreshing after a send leaves the sent bill exactly as it wen
   await w.call(OPERATOR, PREP);
   assert.equal(JSON.stringify(w.docs.get(`billing/mall/runs/${RUN}/bills/t1`)), before);
 });
+
+// --- cost: what the sweeps no longer re-read or re-write ------------------
+
+const { cachedRead } = require('./sweepCache');
+
+test('sweepCache: a value is reused until its time is up, then read again', async () => {
+  const cache = new Map();
+  let reads = 0;
+  const load = async () => { reads += 1; return { n: reads }; };
+
+  assert.deepEqual(await cachedRead(cache, 'k', 1000, 0, load), { n: 1 });
+  assert.deepEqual(await cachedRead(cache, 'k', 1000, 999, load), { n: 1 }, 'still fresh');
+  assert.equal(reads, 1);
+  assert.deepEqual(await cachedRead(cache, 'k', 1000, 1000, load), { n: 2 }, 'expired at the TTL');
+  assert.equal(reads, 2);
+});
+
+test('sweepCache: keys are independent', async () => {
+  const cache = new Map();
+  await cachedRead(cache, 'tags:a', 1000, 0, async () => 'A');
+  assert.equal(await cachedRead(cache, 'tags:b', 1000, 1, async () => 'B'), 'B');
+});
+
+test('sweepCache: a failed read is not remembered, so the next call retries it', async () => {
+  const cache = new Map();
+  await assert.rejects(cachedRead(cache, 'k', 1000, 0, async () => { throw new Error('boom'); }));
+  assert.equal(cache.size, 0);
+  assert.equal(await cachedRead(cache, 'k', 1000, 1, async () => 'ok'), 'ok');
+});
+
+test('sweepCache: null (a device with no display name) is cached, not re-read forever', async () => {
+  const cache = new Map();
+  let reads = 0;
+  const load = async () => { reads += 1; return null; };
+  assert.equal(await cachedRead(cache, 'naming:d', 1000, 0, load), null);
+  assert.equal(await cachedRead(cache, 'naming:d', 1000, 5, load), null);
+  assert.equal(reads, 1, 'a null answer is still an answer');
+});
+
+test('archiveSweep: a run that finds nothing to do writes no state', async () => {
+  const closed = Math.floor(NOW / H) * H - H;
+  const base = closed;   // already caught up to the last closed hour
+  const { sweep, calls } = makeSweepEnv({
+    initialState: { arHour: base, rpHour: base },
+  });
+  const [res] = await sweep();
+
+  assert.equal(res.archived, 0);
+  assert.equal(res.pruned, 0);
+  assert.equal(calls.stateWrites.length, 0, 'nothing moved, so nothing to save');
+  assert.equal(res.arHour, base, 'the watermark is still reported');
+});
+
+test('archiveSweep: a run that moves a watermark still saves it', async () => {
+  const base = Math.floor(NOW / H) * H - 100 * H;
+  const { sweep, calls, state } = makeSweepEnv({
+    initialState: { arHour: base, rpHour: base },
+    maxArchiveHours: 2,
+  });
+  await sweep();
+
+  assert.equal(calls.stateWrites.length, 1);
+  assert.equal(state.value.arHour, base + 2 * H);
+});
+
+test('archiveSweep: a stored state missing rpHour is completed once, then left alone', async () => {
+  const closed = Math.floor(NOW / H) * H - H;
+  const first = makeSweepEnv({ initialState: { arHour: closed } });
+  await first.sweep();
+  assert.equal(first.calls.stateWrites.length, 1, 'rpHour was absent, so it is stored now');
+  assert.equal(first.state.value.rpHour, closed);
+});
+
+test('mallOverview: the dial range does not change when the extremes only drift', () => {
+  // The window slides every sweep, so the exact min and max wobble by a hair.
+  // Each wobble used to be a new number sent to every open wall.
+  const mk = (lo, hi) => Array.from({ length: 12 }, (_, i) => ({
+    minute: i, byTag: { Current: { min: lo, avg: (lo + hi) / 2, max: hi } },
+  }));
+  const range = (lo, hi) => MO.tenantRow({
+    deviceId: 'd', now: 1000, status: { lastSeen: 1000 }, offline: false,
+    latest: { Current: { value: 3.9 } }, rules: {}, windows: mk(lo, hi),
+  }).values.Current;
+
+  const a = range(3.8375, 3.8925);
+  const b = range(3.8391, 3.8925);
+  const c = range(3.8375, 3.8962);
+  assert.deepEqual([b.rmin, b.rmax], [a.rmin, a.rmax]);
+  assert.deepEqual([c.rmin, c.rmax], [a.rmin, a.rmax]);
+});
+
+test('mallOverview: the snapped range always contains everything that was seen', () => {
+  for (const [lo, hi] of [[3.8375, 3.8925], [6.566, 7.534], [1.2, 9.6], [0.0004, 0.0011], [220, 241], [-5, 12], [5, 5]]) {
+    const windows = [{ minute: 0, byTag: { X: { min: lo, avg: (lo + hi) / 2, max: hi } } }];
+    const r = MO.tenantRow({
+      deviceId: 'd', now: 1000, status: { lastSeen: 1000 }, offline: false,
+      latest: { X: { value: lo } }, rules: {}, windows,
+    }).values.X;
+    assert.ok(r.rmin <= lo, `${lo}..${hi}: rmin ${r.rmin} cuts off the lowest reading`);
+    assert.ok(r.rmax >= hi, `${lo}..${hi}: rmax ${r.rmax} cuts off the highest reading`);
+    assert.ok(r.rmax > r.rmin);
+    // Never much wider than the existing 5% pad plus one grid step (about a
+    // fifth of the span) on each side. Skipped for a constant tag, whose
+    // width is the fixed 2% pad and has no span to compare against.
+    if (hi > lo) {
+      const span = hi - lo;
+      assert.ok(lo - r.rmin <= span * 0.3 + 1e-9, `${lo}..${hi}: lower edge is too far out`);
+      assert.ok(r.rmax - hi <= span * 0.3 + 1e-9, `${lo}..${hi}: upper edge is too far out`);
+    }
+  }
+});

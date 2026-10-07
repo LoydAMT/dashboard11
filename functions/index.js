@@ -56,7 +56,13 @@ const ALERT_WINDOWS_PER_SWEEP = 120;
 // is fine for a real plant and pointless for the simulated demo boxes. Add a
 // device id here and redeploy to switch it over; the sweep stops evaluating
 // its thresholds automatically (it reads this same list).
-const LIVE_ALERT_DEVICES = ['UMPD-MCWD'];
+//
+// EMPTY ON PURPOSE. UMPD-MCWD was the only entry, and it now judges its own
+// readings on the box (boxAlerts) and reports them through boxAlertEvent. Its
+// trigger was started for every reading - about 115,000 times a day - only to
+// return at once, so it has been deleted. The machinery below is kept for a
+// future box that cannot be flashed.
+const LIVE_ALERT_DEVICES = [];
 
 // How long the trigger trusts its in-memory copy of a device's thresholds.
 // This is the delay before an edit on the admin page takes effect on the
@@ -73,6 +79,7 @@ const { buildSnapshot, previousFromRaw, phDateKey, phDayStart } = require('./kwh
 const AF = require('./archiveFormat');
 const { listDevices, overviewCompanies, companiesByDevice } = require('./deviceRegistry');
 const { tenantRow, rollUp } = require('./mallOverview');
+const { cachedRead } = require('./sweepCache');
 const { parseFilters, runFiltered } = require('./alertQuery');
 const { createBillingApi, createBillingSend } = require('./billingHandlers');
 const { PREMIUM } = require('./plans');
@@ -209,7 +216,12 @@ const rollupRef = (device, tag) => getDatabase().ref(`devices/${device}/history/
 exports.archiveSweep = onSchedule(
   {
     region: 'asia-southeast1',
-    schedule: 'every 10 minutes',
+    // Hourly, five minutes past. An hour only becomes archivable once it has
+    // closed, so a run every ten minutes found nothing to do five times in
+    // six - each time still reading every device's tag list and its state.
+    // The five minutes let the box flush the last minute of the hour, and
+    // RTDB keeps two days either way, so nothing a chart reads gets later.
+    schedule: '5 * * * *',
     timeZone: 'Etc/UTC',
     // Bounded work per run, but each hour is several RTDB round trips, so
     // the default 60s is not enough headroom.
@@ -706,6 +718,32 @@ exports.boxAlertEvent = onValueCreated(
 //  Alerts
 // ---------------------------------------------------------------------------
 
+// What alertSweep remembers between runs. How long each may be out of date:
+//   rules   a limit edited on the dashboard reaches a box's overview dial
+//           (and a non-box device's evaluation) within this long. The BOX
+//           itself fetches limits from the database on its own timer, so a
+//           box's alerts are not delayed by this at all.
+//   tags    also how long the sweep takes to notice a box has been flashed to
+//           judge its own alerts - until then both could judge a reading,
+//           which the deterministic alert ids already make harmless.
+//   naming  a renamed tenant shows its new name within this long.
+const SWEEP_TTL = { rules: 5 * 60000, tags: 5 * 60000, naming: 10 * 60000 };
+const sweepCache = new Map();
+// device -> the alertState document as Firestore holds it (null = none yet).
+// Held until this sweep changes the document, then forgotten and re-read.
+const alertStateCache = new Map();
+
+async function readAlertState(fs, device) {
+  if (!alertStateCache.has(device)) {
+    const doc = await fs.collection('alertState').doc(device).get();
+    alertStateCache.set(device, doc.exists ? (doc.data() || {}) : null);
+  }
+  const value = alertStateCache.get(device);
+  // A copy, so nothing the engine does to the state it is handed can alter
+  // what is remembered here.
+  return value === null ? null : structuredClone(value);
+}
+
 // Limits live in RTDB at alertRules/{device}/{tagKey} = { hi, lo }, NOT in
 // devices/{device}/tags. The device rewrites its own tags/ node on every
 // push_meta(), which would erase anything stored alongside it. Rules are
@@ -748,24 +786,22 @@ exports.alertSweep = onSchedule(
         // spikes and offline - and must not evaluate thresholds as well.
         const live = LIVE_ALERT_DEVICES.includes(device);
 
-        const [rulesSnap, tagsSnap, statusSnap, stateDoc, latestSnap, nameSnap, liveDoc] =
-          await Promise.all([
-            rtdb.ref(`alertRules/${device}`).once('value'),
-            rtdb.ref(`devices/${device}/tags`).once('value'),
-            rtdb.ref(`devices/${device}/status`).once('value'),
-            fs.collection('alertState').doc(device).get(),
-            // The only two reads added for the overview. Everything else on
-            // this line was already being fetched to evaluate alerts.
-            rtdb.ref(`devices/${device}/latest`).once('value'),
-            rtdb.ref(`naming/${device}`).once('value'),
-            live ? fs.collection('alertLive').doc(device).get() : null,
-          ]);
+        // What changes every run is read every run: the status node, which
+        // is the whole offline check. What changes about once a month - the
+        // tag list, the limits, the display name - comes from memory (see
+        // sweepCache.js) and is re-read every few minutes. The alert state
+        // is Firestore's and is kept in memory until this sweep changes it.
+        const [rules, tagsMeta, statusSnap, stored] = await Promise.all([
+          cachedRead(sweepCache, `rules:${device}`, SWEEP_TTL.rules, now,
+            async () => (await rtdb.ref(`alertRules/${device}`).once('value')).val() || {}),
+          cachedRead(sweepCache, `tags:${device}`, SWEEP_TTL.tags, now,
+            async () => (await rtdb.ref(`devices/${device}/tags`).once('value')).val() || {}),
+          rtdb.ref(`devices/${device}/status`).once('value'),
+          readAlertState(fs, device),
+        ]);
 
-        const rules = rulesSnap.val() || {};
-        const tagsMeta = tagsSnap.val() || {};
         const status = statusSnap.val() || {};
-        const prevState = stateDoc.exists ? (stateDoc.data() || {}) : {};
-        const liveData = (liveDoc && liveDoc.exists && liveDoc.data()) || {};
+        const prevState = stored || {};
 
         const tagNames = {};
         for (const [k, m] of Object.entries(tagsMeta)) tagNames[k] = (m && m.name) || k;
@@ -779,6 +815,20 @@ exports.alertSweep = onSchedule(
         // dial on the landlord's page is scaled to. A box that is on no such
         // page needs none of them read.
         const onOverview = (deviceCompanies[device] || []).some((c) => overviewIds.has(c));
+
+        // The live readings and the display name feed the landlord's tile and
+        // the minute-less alert path. A box that judges its own alerts and is
+        // on no overview page needs neither, so neither is read.
+        const needsLatest = !(boxAlerts && !onOverview);
+        const [latestVal, nameVal, liveDoc] = needsLatest
+          ? await Promise.all([
+            rtdb.ref(`devices/${device}/latest`).once('value').then((s) => s.val()),
+            cachedRead(sweepCache, `naming:${device}`, SWEEP_TTL.naming, now,
+              async () => (await rtdb.ref(`naming/${device}`).once('value')).val()),
+            live ? fs.collection('alertLive').doc(device).get() : null,
+          ])
+          : [null, null, live ? await fs.collection('alertLive').doc(device).get() : null];
+        const liveData = (liveDoc && liveDoc.exists && liveDoc.data()) || {};
 
         let windows;
         // Minute keys read from alertWindows/, so exactly those - and nothing
@@ -847,7 +897,7 @@ exports.alertSweep = onSchedule(
           // window on every sweep. See withLiveWindow in alertEngine.js.
           windows = withLiveWindow({
             windows: [...byMinute.values()].sort((a, b) => a.minute - b.minute),
-            latest: latestSnap.val() || {},
+            latest: latestVal || {},
             tagKeys: tagsToRead,
             now,
           });
@@ -897,9 +947,15 @@ exports.alertSweep = onSchedule(
         // For a box that judges its own alerts the only thing in here that
         // can change is whether it is offline, so the write is skipped while
         // that stays the same - which is nearly every run of every day.
-        const settled = boxAlerts && stateDoc.exists
+        const settled = boxAlerts && stored !== null
           && Boolean(prevState.offline) === Boolean(state.offline);
         if (!settled) {
+          // Forgotten BEFORE the write, so a write that fails (or half
+          // lands) leaves the next run to read what Firestore really holds
+          // rather than trust a copy that may be wrong. A merge write also
+          // does not simply replace the document, which is why the copy is
+          // not updated by hand here.
+          alertStateCache.delete(device);
           await fs.collection('alertState').doc(device).set(state, { merge: true });
         }
 
@@ -926,8 +982,8 @@ exports.alertSweep = onSchedule(
         // the trigger's, since the trigger is what owns its thresholds.
         rows[device] = tenantRow({
           deviceId: device,
-          name: nameSnap.val(),
-          latest: latestSnap.val(),
+          name: nameVal,
+          latest: latestVal,
           status,
           // A box that judges its own alerts keeps each tag's state on its
           // status node, already in hand here - no extra read.
@@ -996,7 +1052,12 @@ exports.alertSweep = onSchedule(
           updates[`${base}/name`] = row.name;
           updates[`${base}/alarm`] = row.alarm;
           updates[`${base}/online`] = row.online;
-          updates[`${base}/lastSeen`] = row.lastSeen;
+          // Only meaningful while the tenant is offline (the tile says
+          // "offline 12 min ago"), and then it never changes. Written for an
+          // online tenant it changed on EVERY sweep - a fresh number for
+          // every tile, re-sent to every open wall - to say nothing the tile
+          // shows. Null removes it as soon as the tenant is back.
+          updates[`${base}/lastSeen`] = row.online ? null : row.lastSeen;
           // Explicit null, not {}: RTDB stores no empty objects, so this
           // says "clear the readings" unambiguously. It matters - a tenant
           // whose latest/ became unreadable must stop showing the numbers

@@ -57,10 +57,31 @@ function rangeOf(rollups) {
     // A dead-constant tag still needs width, or the dial collapses to a
     // point and every reading reads as both ends at once.
     const pad = Math.max(Math.abs(lo) * 0.02, 1e-6);
-    return { min: round(lo - pad), max: round(hi + pad) };
+    return snapOutward(lo - pad, hi + pad);
   }
   const pad = (hi - lo) * RANGE_PAD;
-  return { min: round(lo - pad), max: round(hi + pad) };
+  return snapOutward(lo - pad, hi + pad);
+}
+
+// The window these extremes come from slides forward every two minutes, so
+// the exact min and max drift by a hair on almost every sweep - and each
+// drift was a new number written to, and re-sent to, every open wall for
+// every tile, to move a dial arc by less than a pixel.
+//
+// Snapped OUTWARD to a grid about a fifth of the span, so the range still
+// contains everything that was seen and only changes when an extreme crosses
+// a grid line. At most about 20% wider on each side, which a gauge scale
+// absorbs; and never narrower, which is what would pin the needle off the end.
+function snapOutward(lo, hi) {
+  const span = hi - lo;
+  if (!(span > 0)) return { min: round(lo), max: round(hi) };
+  const step = 10 ** Math.floor(Math.log10(span / 5));
+  // The small epsilon stops a value that is exactly on a grid line (but
+  // sits a rounding error below it) from being pushed a whole step outward.
+  return {
+    min: round(Math.floor(lo / step + 1e-9) * step),
+    max: round(Math.ceil(hi / step - 1e-9) * step),
+  };
 }
 
 // Six significant-ish digits. These ride in a node re-read by every viewer,

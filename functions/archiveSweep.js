@@ -90,6 +90,7 @@ function createSweep({
 
     const result = { device, archived: 0, docsWritten: 0, pruned: 0, keysRemoved: 0, error: null };
     let state = null;
+    let stored = null;
 
     // Everything is inside the try, including the setup reads. With
     // readTagKeys outside it, a single unreachable device threw straight
@@ -101,6 +102,11 @@ function createSweep({
       }
 
       state = await readState(device);
+      // What is stored right now, before the defaults below touch it, so the
+      // write at the end can tell "nothing moved" from "something did".
+      stored = state && typeof state.arHour === 'number'
+        ? { arHour: state.arHour, rpHour: state.rpHour }
+        : null;
       if (!state || typeof state.arHour !== 'number') {
         const oldest = await readOldestRollupHour(device, tags);
         if (oldest == null) return { device, skipped: 'no rollups' };
@@ -154,8 +160,17 @@ function createSweep({
     // Guarded on state: a failure in the setup reads above leaves nothing
     // meaningful to persist, and writing a half-built state would be worse
     // than writing none.
+    //
+    // Skipped when neither watermark moved and both are already stored: a
+    // run that found nothing to do has nothing to save, and writing the same
+    // two numbers back was a Firestore write per device per run.
     if (state) {
-      await writeState(device, { arHour: state.arHour, rpHour: state.rpHour });
+      const unchanged = stored !== null
+        && stored.arHour === state.arHour
+        && stored.rpHour === state.rpHour;
+      if (!unchanged) {
+        await writeState(device, { arHour: state.arHour, rpHour: state.rpHour });
+      }
       result.arHour = state.arHour;
       result.rpHour = state.rpHour;
     }
