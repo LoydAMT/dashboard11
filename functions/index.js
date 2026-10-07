@@ -719,15 +719,16 @@ exports.boxAlertEvent = onValueCreated(
 // ---------------------------------------------------------------------------
 
 // What alertSweep remembers between runs. How long each may be out of date:
-//   rules   a limit edited on the dashboard reaches a box's overview dial
-//           (and a non-box device's evaluation) within this long. The BOX
-//           itself fetches limits from the database on its own timer, so a
-//           box's alerts are not delayed by this at all.
 //   tags    also how long the sweep takes to notice a box has been flashed to
 //           judge its own alerts - until then both could judge a reading,
 //           which the deterministic alert ids already make harmless.
 //   naming  a renamed tenant shows its new name within this long.
-const SWEEP_TTL = { rules: 5 * 60000, tags: 5 * 60000, naming: 10 * 60000 };
+//
+// The alert LIMITS are deliberately not here. They are read fresh on every
+// sweep: a limit edited on the dashboard must take effect as soon as it
+// always did, and the read is a few bytes per device, so caching it would
+// have saved almost nothing for a real delay in an alarm.
+const SWEEP_TTL = { tags: 5 * 60000, naming: 10 * 60000 };
 const sweepCache = new Map();
 // device -> the alertState document as Firestore holds it (null = none yet).
 // Held until this sweep changes the document, then forgotten and re-read.
@@ -786,20 +787,21 @@ exports.alertSweep = onSchedule(
         // spikes and offline - and must not evaluate thresholds as well.
         const live = LIVE_ALERT_DEVICES.includes(device);
 
-        // What changes every run is read every run: the status node, which
-        // is the whole offline check. What changes about once a month - the
-        // tag list, the limits, the display name - comes from memory (see
-        // sweepCache.js) and is re-read every few minutes. The alert state
-        // is Firestore's and is kept in memory until this sweep changes it.
-        const [rules, tagsMeta, statusSnap, stored] = await Promise.all([
-          cachedRead(sweepCache, `rules:${device}`, SWEEP_TTL.rules, now,
-            async () => (await rtdb.ref(`alertRules/${device}`).once('value')).val() || {}),
+        // What changes every run is read every run: the status node (the
+        // whole offline check) and the alert limits. What changes about once
+        // a month - the tag list and the display name - comes from memory
+        // (see sweepCache.js) and is re-read every few minutes. The alert
+        // state is Firestore's and is kept in memory until this sweep
+        // changes it.
+        const [rulesSnap, tagsMeta, statusSnap, stored] = await Promise.all([
+          rtdb.ref(`alertRules/${device}`).once('value'),
           cachedRead(sweepCache, `tags:${device}`, SWEEP_TTL.tags, now,
             async () => (await rtdb.ref(`devices/${device}/tags`).once('value')).val() || {}),
           rtdb.ref(`devices/${device}/status`).once('value'),
           readAlertState(fs, device),
         ]);
 
+        const rules = rulesSnap.val() || {};
         const status = statusSnap.val() || {};
         const prevState = stored || {};
 
