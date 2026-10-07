@@ -19,7 +19,11 @@ import { kwhSoFar } from '../lib/kwh'
  */
 export function useMallOverview(companyId, enabled = true) {
   const on = Boolean(companyId) && enabled
-  const node = useRtdbValue(on ? `mallOverview/${companyId}` : null, on)
+  // The path stays set while `enabled` is false. useRtdbValue then detaches
+  // the listener but KEEPS the last snapshot, so pausing a hidden tab does not
+  // blank the page, and coming back shows the old figures until the fresh
+  // snapshot lands a moment later.
+  const node = useRtdbValue(companyId ? `mallOverview/${companyId}` : null, on)
 
   const tenants = useMemo(() => {
     const raw = node.data?.tenants

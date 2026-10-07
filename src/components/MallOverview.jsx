@@ -1,5 +1,7 @@
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import { useRtdbValue } from '../hooks/useRtdbValue'
+import { usePageActive } from '../hooks/usePageActive'
+import { useOnScreen } from '../hooks/useOnScreen'
 import { useMallOverview, rankTenants, visibleTags, recentAlerts } from '../hooks/useMallOverview'
 import { useCompany } from '../hooks/useCompanies'
 import { gaugeScale, readoutFit } from '../lib/gauge'
@@ -43,7 +45,10 @@ export function MallOverview({
       return next
     })
   }
-  const { loading, error, tenants, totals, updatedAt } = useMallOverview(companyId)
+  // Nobody is reading a hidden tab, so its listeners are dropped (see
+  // hooks/usePageActive.js) and come back the moment it is shown again.
+  const awake = usePageActive()
+  const { loading, error, tenants, totals, updatedAt } = useMallOverview(companyId, awake)
   // One read for the whole estate's display preferences, set on the admin
   // page. Per-device reads would be the fan-out this page exists to avoid.
   const display = useRtdbValue('mallDisplay', true)
@@ -202,7 +207,7 @@ export function MallOverview({
             tenant={t}
             nowMs={nowMs}
             onOpen={onOpenDevice}
-            live={i < LIVE_TILE_LIMIT}
+            live={awake && i < LIVE_TILE_LIMIT}
             chosen={display.data?.[t.id] || null}
             picked={picks[t.id]}
             onPick={pick}
@@ -241,7 +246,15 @@ function TenantTile({ tenant, nowMs, onOpen, live, chosen, picked, onPick }) {
   // The projection still supplies everything else - thresholds, scale,
   // alert state, the daily meter figure - so a tenant past the cap is a
   // slightly staler needle, not a broken tile.
-  const liveLatest = useRtdbValue(live ? `devices/${tenant.id}/latest` : null, live)
+  //
+  // Only while the tile is actually on screen. A tile scrolled out of view
+  // falls back to the projection, which is what it would show anyway, and
+  // stops costing a stream. The path is null (not just disabled) when off, so
+  // a stale live value is never left laid over a newer projection.
+  const tileRef = useRef(null)
+  const onScreen = useOnScreen(tileRef)
+  const streaming = live && onScreen
+  const liveLatest = useRtdbValue(streaming ? `devices/${tenant.id}/latest` : null, streaming)
   const merged = mergeLive(tenant, liveLatest.data)
 
   // The day in progress: the meter's latest reading minus the last 22:00
@@ -276,7 +289,7 @@ function TenantTile({ tenant, nowMs, onOpen, live, chosen, picked, onPick }) {
     // NOT a button. The readings inside are buttons now, and a button inside
     // a button is invalid HTML that browsers resolve by dropping one of
     // them - usually the inner one, which is the one that matters here.
-    <div className={`tenant-tile alarm-${tenant.alarm}`}>
+    <div ref={tileRef} className={`tenant-tile alarm-${tenant.alarm}`}>
       <button
         type="button"
         className="tenant-open"
