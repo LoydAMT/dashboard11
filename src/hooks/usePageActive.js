@@ -1,27 +1,28 @@
 import { useEffect, useState } from 'react'
 
 /**
- * Whether this tab is worth streaming live data to.
+ * Whether this tab is worth streaming live data to, when the viewer has asked
+ * for hidden tabs to be paused.
  *
- * Every open listener is billed for each byte it receives, whether or not
- * anyone is looking. A wall left in a background tab all day costs the same as
- * one on screen. This turns false once the tab has been hidden for `graceMs`,
- * and true again the instant it is shown, so the caller can detach its
- * listeners while nobody can see them and re-attach on return.
+ * OFF BY DEFAULT. A tab the browser calls "hidden" is not always unseen - a
+ * window covered by another, or a wall on a second monitor, can report
+ * hidden while someone is still reading it, and live readings matter more
+ * here than the bandwidth. Add ?pausehidden=1 to the address to turn the
+ * pause on for a tab that is genuinely out of sight (a background tab left
+ * open all day). The unattended-tab pause in useIdlePause covers the common
+ * case without this.
  *
- * The grace period stops a quick alt-tab from tearing every listener down and
- * paying to fetch it all again a second later.
- *
- * KIOSK OPT-OUT: add ?kiosk=1 to the address. A display that must keep
- * refreshing even when the browser reports the page hidden (some TV/signage
- * setups do) then never pauses.
+ * When on, this turns false once the tab has been hidden for `graceMs` and
+ * true again the instant it is shown, so the caller can detach its listeners
+ * while nobody can see them and re-attach on return. ?kiosk=1 always wins and
+ * never pauses.
  */
 export function usePageActive(graceMs = 60000) {
   const [active, setActive] = useState(() => !isHidden())
-  const [kiosk] = useState(isKiosk)
+  const [enabled] = useState(() => hasParam('pausehidden') && !hasParam('kiosk'))
 
   useEffect(() => {
-    if (kiosk) return undefined
+    if (!enabled) return undefined
 
     let timer = null
     const onChange = () => {
@@ -39,18 +40,18 @@ export function usePageActive(graceMs = 60000) {
       clearTimeout(timer)
       document.removeEventListener('visibilitychange', onChange)
     }
-  }, [graceMs, kiosk])
+  }, [graceMs, enabled])
 
-  return kiosk || active
+  return !enabled || active
 }
 
 function isHidden() {
   return typeof document !== 'undefined' && document.hidden === true
 }
 
-function isKiosk() {
+export function hasParam(name) {
   try {
-    return new URLSearchParams(window.location.search).has('kiosk')
+    return new URLSearchParams(window.location.search).has(name)
   } catch {
     return false
   }

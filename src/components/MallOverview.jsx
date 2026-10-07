@@ -1,6 +1,8 @@
 import { useRef, useState } from 'react'
 import { useRtdbValue } from '../hooks/useRtdbValue'
 import { usePageActive } from '../hooks/usePageActive'
+import { useIdlePause } from '../hooks/useIdlePause'
+import { PausedNotice } from './PausedNotice'
 import { useOnScreen } from '../hooks/useOnScreen'
 import { useMallOverview, rankTenants, visibleTags, recentAlerts } from '../hooks/useMallOverview'
 import { useCompany } from '../hooks/useCompanies'
@@ -45,9 +47,16 @@ export function MallOverview({
       return next
     })
   }
-  // Nobody is reading a hidden tab, so its listeners are dropped (see
-  // hooks/usePageActive.js) and come back the moment it is shown again.
+  // Two separate switches, deliberately:
+  //  - `awake` is the opt-in "pause a hidden tab" (hooks/usePageActive.js,
+  //    ?pausehidden=1). It also drops the summary below.
+  //  - `paused` is an UNATTENDED tab (hooks/useIdlePause.js): no input for 5
+  //    minutes. It stops only the per-tile live overlay - the expensive part -
+  //    and NEVER the summary below, which carries alarm state, counts and the
+  //    latest alert. An unattended wall still turns red the moment something
+  //    is wrong. ?kiosk=1 exempts a display that is meant to sit untouched.
   const awake = usePageActive()
+  const { paused, resume } = useIdlePause()
   const { loading, error, tenants, totals, updatedAt } = useMallOverview(companyId, awake)
   // One read for the whole estate's display preferences, set on the admin
   // page. Per-device reads would be the fan-out this page exists to avoid.
@@ -79,6 +88,7 @@ export function MallOverview({
 
   return (
     <div className="mall">
+      {paused && <PausedNotice onResume={resume} />}
       {onClose && <BackButton onClick={onClose}>Back to dashboard</BackButton>}
       <div className="mall-head">
         <div>
@@ -207,7 +217,7 @@ export function MallOverview({
             tenant={t}
             nowMs={nowMs}
             onOpen={onOpenDevice}
-            live={awake && i < LIVE_TILE_LIMIT}
+            live={awake && !paused && i < LIVE_TILE_LIMIT}
             chosen={display.data?.[t.id] || null}
             picked={picks[t.id]}
             onPick={pick}
