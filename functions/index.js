@@ -63,8 +63,11 @@ const LIVE_ALERT_DEVICES = ['UMPD-MCWD'];
 // instant path. Two minutes keeps it to one small read per two minutes
 // instead of one per reading.
 const LIVE_RULES_TTL_MS = 2 * 60000;
-// Tag names and company ownership change rarely; an hour is plenty.
-const LIVE_META_TTL_MS = 60 * 60000;
+// Tag names and company ownership change rarely - but this is also how the
+// trigger learns that its box has been reflashed to work out its own alerts
+// (boxAlerts), and until it has, both would judge the same reading. Five
+// minutes keeps that overlap short for two small reads.
+const LIVE_META_TTL_MS = 5 * 60000;
 const LIVE_LOG_EVERY_MS = 10 * 60000;
 const { buildSnapshot, previousFromRaw, phDateKey, phDayStart } = require('./kwhSnapshot');
 const AF = require('./archiveFormat');
@@ -465,7 +468,7 @@ async function ensureLive(device, now) {
   if (!c) {
     c = {
       tags: {}, rules: {}, rulesAt: 0, rulesBusy: null,
-      tagNames: {}, boxWindows: false, owning: [], metaAt: 0, metaBusy: null,
+      tagNames: {}, boxWindows: false, boxAlerts: false, owning: [], metaAt: 0, metaBusy: null,
       lastTs: {}, acc: createAccumulator(), seen: 0, logAt: now, announced: false,
     };
     liveCtx.set(device, c);
@@ -493,6 +496,14 @@ async function ensureLive(device, now) {
       for (const [k, m] of Object.entries(meta)) c.tagNames[k] = (m && m.name) || k;
       // A box that sends its own minute summaries makes ours redundant.
       c.boxWindows = alertWindowTags(meta).length > 0;
+      // The box now judges its own alerts and reports them (boxAlertEvent).
+      const boxAlerts = boxAlertTags(meta).length > 0;
+      if (boxAlerts !== c.boxAlerts) {
+        console.log(`liveAlerts: ${device} ${boxAlerts
+          ? 'now works out its own alerts - this trigger stands down and can be removed'
+          : 'no longer works out its own alerts - this trigger takes over again'}`);
+      }
+      c.boxAlerts = boxAlerts;
       c.owning = companiesByDevice(companiesSnap.val() || {})[device] || [];
       c.metaAt = Date.now();
     }).catch((err) => console.error(`liveAlerts: ${device} metadata unreadable`, err))
@@ -514,6 +525,12 @@ function liveAlertHandler(device) {
     const ts = (typeof after.ts === 'number' && Number.isFinite(after.ts)) ? after.ts : now;
 
     const c = await ensureLive(device, now);
+
+    // Two evaluators would each record the same crossing. Once the box says
+    // it judges its own readings, this does nothing at all - the function is
+    // still STARTED for every reading until it is deleted, which is the
+    // reason to take the device out of LIVE_ALERT_DEVICES once that is so.
+    if (c.boxAlerts) return;
 
     if (!c.announced) {
       c.announced = true;
@@ -716,6 +733,7 @@ exports.alertSweep = onSchedule(
 
     const { companies, devices: sweepDevices } = await loadSweepContext();
     const deviceCompanies = companiesByDevice(companies);
+    const overviewIds = new Set(overviewCompanies(companies));
     // Filled as each device is evaluated, then projected into the landlord
     // view below. Built from work this sweep is doing anyway - the whole
     // reason the overview lives here rather than in a second sweep of its
@@ -757,6 +775,10 @@ exports.alertSweep = onSchedule(
         // thing a box cannot do - notice that it has gone quiet - and the
         // landlord's overview.
         const boxAlerts = boxAlertTags(tagsMeta).length > 0;
+        // Its recent minutes are then wanted for one thing only: the range a
+        // dial on the landlord's page is scaled to. A box that is on no such
+        // page needs none of them read.
+        const onOverview = (deviceCompanies[device] || []).some((c) => overviewIds.has(c));
 
         let windows;
         // Minute keys read from alertWindows/, so exactly those - and nothing
@@ -765,7 +787,9 @@ exports.alertSweep = onSchedule(
         // Likewise the Firestore summaries the live trigger built.
         let liveWindowRefs = null;
 
-        if (alertWindowTags(tagsMeta).length === 0 && live) {
+        if (boxAlerts && !onOverview) {
+          windows = [];
+        } else if (alertWindowTags(tagsMeta).length === 0 && live && !boxAlerts) {
           // The trigger summarises each minute from the readings it sees and
           // leaves it in Firestore. Reading those costs no database download
           // at all, and replaces the history query per tag below.
