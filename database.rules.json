@@ -157,6 +157,9 @@
     // but never anyone else's - the full admin list is not something to leak
     // to every signed-in account.
     "admins": {
+      // An admin may see who the other admins are. Needed so a mall created
+      // on the admin page can be given to every admin, not only its creator.
+      ".read": "auth != null && root.child('admins/'+auth.uid).val() === true",
       "$uid": {
         ".read": "auth != null && auth.uid === $uid",
         ".write": false
@@ -196,6 +199,25 @@
         ".read": "auth != null && auth.token.firebase.sign_in_provider !== 'anonymous' && root.child('companyMembers/'+$companyId+'/'+auth.uid).exists()",
         ".write": false,
 
+        // An admin creates a mall by naming it, and renames it the same way
+        // (the admin page: components/CompanyManager.jsx). A name is what
+        // makes a company exist, which is why plan and tenant below insist
+        // on the parent being there first.
+        "name": {
+          ".write": "auth != null && auth.token.firebase.sign_in_provider !== 'anonymous' && root.child('admins/'+auth.uid).val() === true",
+          ".validate": "newData.isString() && newData.val().length > 0 && newData.val().length <= 80"
+        },
+
+        // Which meters the mall holds. Only the literal true, or removal -
+        // and only for a mall that has a name, so a slip of the keyboard
+        // cannot create a nameless company holding one meter.
+        "devices": {
+          "$deviceId": {
+            ".write": "auth != null && auth.token.firebase.sign_in_provider !== 'anonymous' && root.child('admins/'+auth.uid).val() === true",
+            ".validate": "newData.val() === true && newData.parent().parent().child('name').exists()"
+          }
+        },
+
         // Only for a company that already exists, so a mistyped id cannot
         // create a stray company holding nothing but a plan.
         "plan": {
@@ -214,9 +236,20 @@
     // devices/{id}/viewers: a member list leaks every colleague's uid to
     // anyone on the company. Read internally by the rules above via
     // root.child(), and written only by the Admin SDK.
+    //
+    // One exception: an admin may add or remove an ADMIN (themselves or
+    // another). That is what lets a mall created on the admin page show up
+    // for every admin afterwards. It reveals nothing an admin cannot
+    // already see, and adding a customer still goes through the Admin SDK.
     "companyMembers": {
       ".read": false,
-      ".write": false
+      ".write": false,
+      "$companyId": {
+        "$uid": {
+          ".write": "auth != null && auth.token.firebase.sign_in_provider !== 'anonymous' && root.child('admins/'+auth.uid).val() === true && root.child('admins/'+$uid).val() === true",
+          ".validate": "newData.val() === 'operator' || newData.val() === 'viewer'"
+        }
+      }
     },
 
     // "which companies am I in" - the same kind of navigation index as

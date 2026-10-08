@@ -136,7 +136,7 @@ function ThresholdRow({ deviceId, tagKey, unit, rule }) {
         {unit && <span className="thresholds-unit"> ({unit})</span>}
         {!active && <span className="thresholds-off"> no alerts set</span>}
       </td>
-      <td>
+      <td data-label="Alert below">
         <input
           type="text" inputMode="decimal" className="thresholds-input"
           value={lo} onChange={onEdit(setLoDraft)}
@@ -144,7 +144,7 @@ function ThresholdRow({ deviceId, tagKey, unit, rule }) {
           placeholder="—" aria-label={`Alert below this value for ${tagKey}`}
         />
       </td>
-      <td>
+      <td data-label="Alert above">
         <input
           type="text" inputMode="decimal" className="thresholds-input"
           value={hi} onChange={onEdit(setHiDraft)}

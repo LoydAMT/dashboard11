@@ -1,14 +1,16 @@
-import { useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { ref, set } from 'firebase/database'
 import { db } from '../firebase'
 import { useAuth } from '../hooks/useAuth'
 import { useDeviceAccess } from '../hooks/useDeviceAccess'
 import { useRtdbValue } from '../hooks/useRtdbValue'
 import { useIsAdmin } from '../hooks/useIsAdmin'
+import { useDeviceName } from '../hooks/useDeviceName'
 import { AlertThresholds } from './AlertThresholds'
 import { MallDisplay } from './MallDisplay'
 import { GaugeDisplay } from './GaugeDisplay'
 import { CompanyPlans } from './CompanyPlans'
+import { CompanyManager } from './CompanyManager'
 import { SignIn } from './SignIn'
 
 // Renaming stays a short named list of accounts, deliberately - it is a
@@ -42,6 +44,12 @@ export function NamingPage() {
   const deviceAccess = useDeviceAccess(realUser ? user : null)
   const isAdmin = useIsAdmin(realUser ? user : null)
   const mayRename = NAMING_ACCESS_UIDS.has(user?.uid)
+  const knownDevices = useMemo(() => deviceAccess.devices.map((d) => d.id), [deviceAccess.devices])
+  const [tab, setTab] = useState(tabFromHash)
+  const selectTab = (id) => {
+    setTab(id)
+    try { window.history.replaceState(null, '', `#${id}`) } catch { /* the tab still switches */ }
+  }
 
   if (!resolved) {
     return (
@@ -83,73 +91,200 @@ export function NamingPage() {
             <span className="masthead-tagline">Admin</span>
           </div>
         </div>
+        <a className="signout-btn admin-back" href="/">&larr; Dashboard</a>
       </header>
 
-      <div className="notice notice-info">
-        <h2>Devices and alerts</h2>
-        <p>
-          <strong>Name</strong> is what everyone signed in sees in place of a
-          device's raw id. Clear it and save to go back to showing the id.
-        </p>
-        <p>
-          <strong>Alert thresholds</strong> decide when you get told about a
-          reading — for example, notify if voltage drops below 207&nbsp;V, or
-          if a tenant draws more than 12&nbsp;A. Leave a field blank for no
-          alert on that side.</p>
-        <p className="admin-hint">
-          These only send notifications. Nothing is switched off, cut or
-          restricted — the system reads meters, it does not control supply.
-        </p>
-        <p className="admin-hint">
-          Separate from spike alerts. A spike is a reading far outside a
-          tag's own recent range, and is reported whether or not a threshold
-          is set here — it needs no configuration and cannot be switched off
-          from this page. Thresholds catch a value you have decided to watch
-          for; spikes catch a value nobody thought to watch for.
-        </p>
-        {!mayRename && (
-          <p className="admin-hint">
-            Renaming is restricted to named accounts, so the name fields are
-            read-only for you. Alert thresholds are editable by any admin.
-          </p>
-        )}
-      </div>
+      {/* One thing at a time. The page used to be every setting of every
+          meter in one scroll; three tabs answer "what am I here to do". */}
+      <nav className="ranges admin-tabs" aria-label="Admin sections">
+        {TABS.map(([id, label]) => (
+          <button
+            key={id}
+            type="button"
+            className={`range-btn ${tab === id ? 'range-active' : ''}`}
+            aria-pressed={tab === id}
+            onClick={() => selectTab(id)}
+          >
+            {label}
+          </button>
+        ))}
+      </nav>
 
-      <CompanyPlans />
-
-      {deviceAccess.loading && <p>Loading your devices…</p>}
-
-      {!deviceAccess.loading && deviceAccess.devices.length === 0 && (
-        <p>No devices to name yet.</p>
+      {tab === 'meters' && (
+        <MeterList devices={deviceAccess.devices} loading={deviceAccess.loading} mayRename={mayRename} />
       )}
-
-      {!deviceAccess.loading && deviceAccess.devices.length > 0 && (
-        <div className="naming-list">
-          {deviceAccess.devices.map((d) => (
-            <DeviceAdminCard key={d.id} deviceId={d.id} mayRename={mayRename} />
-          ))}
-        </div>
-      )}
-
-      <p><a href="/">&larr; Back to the dashboard</a></p>
+      {tab === 'malls' && <CompanyManager uid={user.uid} knownDevices={knownDevices} />}
+      {tab === 'plans' && <CompanyPlans />}
     </div>
   )
 }
 
-function DeviceAdminCard({ deviceId, mayRename }) {
+const TABS = [['meters', 'Meters'], ['malls', 'Malls'], ['plans', 'Plans']]
+
+// The open tab lives in the address (#malls), so a reload or a shared link
+// lands on the same one.
+function tabFromHash() {
+  const h = typeof window !== 'undefined' ? window.location.hash.replace('#', '') : ''
+  return TABS.some(([id]) => id === h) ? h : 'meters'
+}
+
+/**
+ * Every meter this account can open, grouped by mall and folded shut.
+ *
+ * Folded for two reasons. Reading: twenty-three meters each showing four
+ * blocks of settings is a page nobody can find anything on. And cost: a
+ * meter's limits, tags and display choices are only read from the database
+ * while that meter is open.
+ */
+function MeterList({ devices, loading, mayRename }) {
+  const companies = useRtdbValue('companies', true)
+  const [query, setQuery] = useState('')
+  const [openId, setOpenId] = useState(null)
+
+  const groups = useMemo(() => {
+    const byNumber = (x, y) => x.localeCompare(y, undefined, { numeric: true })
+    const mine = new Set(devices.map((d) => d.id))
+    const placed = new Set()
+    const out = []
+    const list = Object.entries(companies.data || {})
+      .filter(([, c]) => c && typeof c === 'object')
+      .map(([id, c]) => ({ id, name: (typeof c.name === 'string' && c.name) || id, devices: Object.keys(c.devices || {}) }))
+      // Biggest first: a mall's own entry should claim its meters before a
+      // demo group that happens to share one.
+      .sort((x, y) => y.devices.length - x.devices.length || x.name.localeCompare(y.name))
+    for (const c of list) {
+      const ids = c.devices.filter((d) => mine.has(d) && !placed.has(d)).sort(byNumber)
+      if (ids.length === 0) continue
+      for (const d of ids) placed.add(d)
+      out.push({ key: c.id, name: c.name, ids })
+    }
+    const rest = [...mine].filter((d) => !placed.has(d)).sort(byNumber)
+    if (rest.length > 0) out.push({ key: '/none', name: 'Not in a mall', ids: rest })
+    return out.sort((x, y) => x.name.localeCompare(y.name))
+  }, [companies.data, devices])
+
+  const q = query.trim().toLowerCase()
+
   return (
-    <section className="admin-card">
-      <NamingRow deviceId={deviceId} mayRename={mayRename} />
-      <AlertThresholds deviceId={deviceId} />
-      <div className="admin-sub">
-        <h4>Dials</h4>
-        <GaugeDisplay deviceId={deviceId} />
+    <section>
+      <div className="admin-intro">
+        <h2>Meters</h2>
+        <p className="admin-hint">
+          Open a meter to change its name, its alert limits, and how it is shown.
+          Alert limits only send notifications — nothing is switched off.
+        </p>
+        {!mayRename && (
+          <p className="admin-hint">Renaming is limited to named accounts, so names are read-only for you.</p>
+        )}
+        <input
+          className="naming-input admin-search"
+          type="search"
+          value={query}
+          placeholder="Find a meter by name or id"
+          aria-label="Find a meter"
+          onChange={(e) => setQuery(e.target.value)}
+        />
       </div>
-      <div className="admin-sub">
-        <h4>Mall page</h4>
-        <MallDisplay deviceId={deviceId} />
-      </div>
+
+      {loading && <p className="admin-hint">Loading your meters…</p>}
+      {!loading && devices.length === 0 && <p className="admin-hint">No meters yet. Add some to a mall on the Malls tab.</p>}
+
+      {groups.map((g) => (
+        <MeterGroup
+          key={g.key}
+          group={g}
+          query={q}
+          openId={openId}
+          onToggle={(id) => setOpenId((cur) => (cur === id ? null : id))}
+          mayRename={mayRename}
+        />
+      ))}
     </section>
+  )
+}
+
+function MeterGroup({ group, query, openId, onToggle, mayRename }) {
+  // Which of its meters match the search is only known once each has
+  // looked up its own name, so the rows report back and an empty group
+  // hides itself.
+  const [hidden, setHidden] = useState({})
+  const report = useCallback((id, isHidden) => {
+    setHidden((prev) => (Boolean(prev[id]) === isHidden ? prev : { ...prev, [id]: isHidden }))
+  }, [])
+  const shown = group.ids.filter((id) => !hidden[id]).length
+
+  return (
+    <div className="meter-group" hidden={shown === 0}>
+      <h3 className="meter-group-title">
+        {group.name}
+        <span className="meter-group-count">{shown} meter{shown === 1 ? '' : 's'}</span>
+      </h3>
+      <div className="meter-list">
+        {group.ids.map((id) => (
+          <MeterItem
+            key={id}
+            deviceId={id}
+            query={query}
+            open={openId === id}
+            onToggle={onToggle}
+            onHidden={report}
+            mayRename={mayRename}
+          />
+        ))}
+      </div>
+    </div>
+  )
+}
+
+function MeterItem({ deviceId, query, open, onToggle, onHidden, mayRename }) {
+  const { name } = useDeviceName(deviceId)
+  const match = !query || deviceId.toLowerCase().includes(query) || String(name).toLowerCase().includes(query)
+
+  useEffect(() => { onHidden(deviceId, !match) }, [deviceId, match, onHidden])
+  if (!match) return null
+
+  return (
+    <div className={`meter-item${open ? ' is-open' : ''}`}>
+      <button
+        type="button"
+        className="meter-head"
+        aria-expanded={open}
+        onClick={() => onToggle(deviceId)}
+      >
+        <span className="meter-head-name">{name}</span>
+        {name !== deviceId && <span className="meter-head-id">{deviceId}</span>}
+        <svg className="picker-chevron" viewBox="0 0 12 12" width="12" height="12" aria-hidden="true">
+          <path d="M2.5 4.5 6 8l3.5-3.5" fill="none" stroke="currentColor" strokeWidth="1.6"
+                strokeLinecap="round" strokeLinejoin="round" />
+        </svg>
+      </button>
+
+      {open && (
+        <div className="meter-body">
+          <div className="admin-sub admin-sub-first">
+            <h4>Name</h4>
+            <p className="admin-hint">What everyone sees instead of the id. Clear it to show the id again.</p>
+            <NamingRow deviceId={deviceId} mayRename={mayRename} />
+          </div>
+          <div className="admin-sub">
+            <h4>Alert limits</h4>
+            <p className="admin-hint">
+              Notify when a reading goes below or above a value. Leave a box empty for no alert on
+              that side. Sudden jumps are reported by themselves and need no limit.
+            </p>
+            <AlertThresholds deviceId={deviceId} />
+          </div>
+          <div className="admin-sub">
+            <h4>Dials</h4>
+            <GaugeDisplay deviceId={deviceId} />
+          </div>
+          <div className="admin-sub">
+            <h4>Mall page</h4>
+            <MallDisplay deviceId={deviceId} />
+          </div>
+        </div>
+      )}
+    </div>
   )
 }
 
@@ -183,7 +318,6 @@ function NamingRow({ deviceId, mayRename }) {
 
   return (
     <div className="naming-row">
-      <div className="naming-row-id">{deviceId}</div>
       <input
         type="text"
         className="naming-input"
