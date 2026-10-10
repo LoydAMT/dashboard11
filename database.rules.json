@@ -36,6 +36,13 @@
     ".write": false,
 
     "devices": {
+      // Admins may list every device id, so a box that has just started
+      // publishing shows up on the admin page before it belongs to any mall
+      // (components/CompanyManager.jsx). The page asks with shallow=true,
+      // which returns the ids and nothing under them. Admins are Instrubyte
+      // staff; this grants them nothing about a tenant's readings that the
+      // per-path rules below did not already.
+      ".read": "auth != null && auth.token.firebase.sign_in_provider !== 'anonymous' && root.child('admins/'+auth.uid).val() === true",
       "$deviceId": {
         // A session may read its own membership check inputs implicitly via
         // the root.child() calls below; it never reads viewers/operators

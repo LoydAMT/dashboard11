@@ -980,6 +980,11 @@ body {
 .company-device { display: flex; align-items: baseline; gap: 6px; font-size: .85rem; min-width: 0; cursor: pointer; }
 .company-device-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .company-device-id { font-size: .72rem; color: var(--text-faint); white-space: nowrap; }
+.company-device-free {
+  font-size: .68rem; font-weight: 600; white-space: nowrap;
+  padding: 0 6px; border-radius: 999px;
+  color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
 .company-add, .company-save { display: flex; align-items: center; gap: 8px; }
 .company-add .naming-input { flex: 1 1 auto; }
 .company-save { justify-content: flex-end; }

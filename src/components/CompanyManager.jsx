@@ -1,8 +1,9 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { ref, update } from 'firebase/database'
 import { db } from '../firebase'
 import { useRtdbValue } from '../hooks/useRtdbValue'
 import { useDeviceName } from '../hooks/useDeviceName'
+import { fetchRtdbRest } from '../lib/restdb'
 
 /**
  * Create a mall and choose which meters belong to it.
@@ -47,14 +48,34 @@ export function CompanyManager({ uid, knownDevices = [] }) {
     [companies.data],
   )
 
-  // Every meter this page knows of: those already in some mall, plus those
-  // this account can open. A box that has never been in a mall is in
-  // neither list, which is what the "add by id" field on each mall is for.
+  // EVERY device that has ever published, mall or no mall - so a box that
+  // has just been switched on can be put in a mall by ticking it. One
+  // shallow REST read: ids only, never what is stored under them (a plain
+  // read of devices/ would download every meter's history). Re-read each
+  // time this tab is opened, which is when a new box is being looked for.
+  const [published, setPublished] = useState([])
+  const [listError, setListError] = useState(null)
+  useEffect(() => {
+    let live = true
+    fetchRtdbRest('devices', { shallow: 'true' })
+      .then((ids) => { if (live) setPublished(Object.keys(ids || {})) })
+      .catch((err) => { if (live) setListError(err?.message || String(err)) })
+    return () => { live = false }
+  }, [])
+
+  // In some mall already, as opposed to published but unassigned.
+  const assigned = useMemo(() => {
+    const s = new Set()
+    for (const c of list) for (const d of c.devices) s.add(d)
+    return s
+  }, [list])
+
   const allDevices = useMemo(() => {
-    const ids = new Set(knownDevices)
-    for (const c of list) for (const d of c.devices) ids.add(d)
+    const ids = new Set([...knownDevices, ...published, ...assigned])
     return [...ids].sort(byNumber)
-  }, [list, knownDevices])
+  }, [knownDevices, published, assigned])
+
+  const unassignedCount = allDevices.filter((d) => !assigned.has(d)).length
 
   return (
     <section className="admin-card">
@@ -67,6 +88,16 @@ export function CompanyManager({ uid, knownDevices = [] }) {
 
       <NewCompany adminUids={adminUids} existingIds={list.map((c) => c.id)} />
 
+      {unassignedCount > 0 && (
+        <p className="admin-hint">
+          {unassignedCount} meter{unassignedCount === 1 ? ' is' : 's are'} not in any mall yet
+          {' '}- marked <span className="company-device-free">no mall</span> in the lists below.
+        </p>
+      )}
+      {listError && (
+        <p className="admin-hint">Could not list every device ({listError}); showing the ones already in a mall.</p>
+      )}
+
       {companies.error && (
         <p className="naming-row-error" role="alert">
           Could not read malls: {companies.error.message || String(companies.error)}
@@ -76,7 +107,7 @@ export function CompanyManager({ uid, knownDevices = [] }) {
 
       {list.length > 0 && (
         <div className="plan-list">
-          {list.map((c) => <CompanyRow key={c.id} company={c} allDevices={allDevices} />)}
+          {list.map((c) => <CompanyRow key={c.id} company={c} allDevices={allDevices} assigned={assigned} />)}
         </div>
       )}
     </section>
@@ -130,7 +161,7 @@ function NewCompany({ adminUids, existingIds }) {
   )
 }
 
-function CompanyRow({ company, allDevices }) {
+function CompanyRow({ company, allDevices, assigned }) {
   const [open, setOpen] = useState(false)
   // null = untouched, follow the database - the same pattern the plan and
   // name fields use, so a change made elsewhere shows up here unprompted.
@@ -220,7 +251,7 @@ function CompanyRow({ company, allDevices }) {
           <div className="company-devices" role="group" aria-label={`Meters in ${company.name}`}>
             {options.length === 0 && <p className="admin-hint">No meters known yet. Add one by id below.</p>}
             {options.map((id) => (
-              <DeviceOption key={id} deviceId={id} checked={chosen.has(id)} onToggle={toggle} />
+              <DeviceOption key={id} deviceId={id} checked={chosen.has(id)} onToggle={toggle} free={!assigned.has(id)} />
             ))}
           </div>
 
@@ -269,13 +300,14 @@ function CompanyRow({ company, allDevices }) {
 
 // A component per meter, because each needs its own name lookup and hooks
 // cannot be called in a loop whose length changes.
-function DeviceOption({ deviceId, checked, onToggle }) {
+function DeviceOption({ deviceId, checked, onToggle, free }) {
   const { name } = useDeviceName(deviceId)
   return (
     <label className="company-device">
       <input type="checkbox" checked={checked} onChange={() => onToggle(deviceId)} />
       <span className="company-device-name">{name}</span>
       {name !== deviceId && <span className="company-device-id">{deviceId}</span>}
+      {free && <span className="company-device-free">no mall</span>}
     </label>
   )
 }
