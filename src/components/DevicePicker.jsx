@@ -32,8 +32,12 @@ export function DevicePicker({ devices, companyIds = [], onSelect, onOpenMall })
 
   return (
     <div className="notice notice-info device-picker">
-      <h2>Choose a device</h2>
-      <p>This account has access to more than one.</p>
+      <h2>{grouped ? 'Choose a mall or a meter' : 'Choose a meter'}</h2>
+      <p>
+        {grouped
+          ? 'Open a mall to see all its tenants on one page, or pick a single meter.'
+          : 'This account has access to more than one.'}
+      </p>
 
       {grouped ? (
         <CompanyGroups
@@ -75,9 +79,18 @@ function CompanyGroups({ devices, companyIds, onSelect, onOpenMall }) {
     })
   }, [])
 
+  // A device counts as placed only when a mall row actually shows it: a
+  // company the account can open two or more meters of. A company with one
+  // such meter is not a mall - CompanyGroup renders nothing for it - so its
+  // meter joins the single meters below instead of sitting between the malls
+  // as a row that looks like nothing else on the page.
   const claimed = new Set()
-  for (const ids of Object.values(claimedBy)) for (const d of ids) claimed.add(d)
+  for (const ids of Object.values(claimedBy)) {
+    const visible = ids.filter((d) => allowed.has(d))
+    if (visible.length >= 2) for (const d of visible) claimed.add(d)
+  }
   const rest = devices.filter((d) => !claimed.has(d.id))
+  const anyMall = claimed.size > 0
 
   return (
     <>
@@ -92,12 +105,13 @@ function CompanyGroups({ devices, companyIds, onSelect, onOpenMall }) {
         />
       ))}
 
-      {/* Anything reachable that no company of theirs claims. Normally
-          empty; it exists so a device can never become invisible merely
-          because its company membership is missing or still propagating. */}
+      {/* Every meter no mall row above shows: a company's only meter, and
+          anything reachable that no company of theirs claims - so a device
+          can never become invisible merely because its company membership
+          is missing or still propagating. */}
       {rest.length > 0 && (
         <div className="device-picker-group">
-          <h3 className="device-picker-group-name">Other</h3>
+          {anyMall && <h3 className="device-picker-group-name">Single meters</h3>}
           <div className="device-picker-list">
             {rest.map((d) => (
               <DevicePickerItem key={d.id} deviceId={d.id} onSelect={onSelect} />
@@ -132,16 +146,8 @@ function CompanyGroup({ companyId, allowed, onSelect, onOpenMall, onDevices }) {
   // device this account cannot read must not put a button on screen that
   // fails when pressed.
   const visible = deviceIds.filter((id) => allowed.has(id))
-  if (visible.length === 0) return null
-
-  // One meter is not a mall. It gets its own button, with nothing to unfold.
-  if (visible.length === 1) {
-    return (
-      <div className="device-picker-list">
-        <DevicePickerItem deviceId={visible[0]} onSelect={onSelect} />
-      </div>
-    )
-  }
+  // One meter is not a mall: the parent lists it with the single meters.
+  if (visible.length < 2) return null
 
   // The same test MallEntry applies: the overview exists for a company with
   // several meters that is not one tenant's own login (the rules refuse that

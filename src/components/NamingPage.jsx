@@ -12,6 +12,9 @@ import { GaugeDisplay } from './GaugeDisplay'
 import { CompanyPlans } from './CompanyPlans'
 import { CompanyManager } from './CompanyManager'
 import { SignIn } from './SignIn'
+import { Masthead } from './Masthead'
+import { useTheme } from '../hooks/useTheme'
+import { signOutUser } from '../auth'
 
 // Renaming stays a short named list of accounts, deliberately - it is a
 // labelling tool, not a role. Alert limits are the opposite: setting a
@@ -45,6 +48,7 @@ export function NamingPage() {
   const isAdmin = useIsAdmin(realUser ? user : null)
   const mayRename = NAMING_ACCESS_UIDS.has(user?.uid)
   const knownDevices = useMemo(() => deviceAccess.devices.map((d) => d.id), [deviceAccess.devices])
+  const { theme, setTheme } = useTheme()
   const [tab, setTab] = useState(tabFromHash)
   const selectTab = (id) => {
     setTab(id)
@@ -69,10 +73,23 @@ export function NamingPage() {
   if (!realUser) return <SignIn />
 
 
+  const masthead = (
+    <Masthead
+      tagline="Admin"
+      signedIn
+      email={user?.email}
+      onSignOut={signOutUser}
+      theme={theme}
+      onThemeChange={setTheme}
+      link={{ href: '/', label: '← Dashboard' }}
+    />
+  )
+
   if (!isAdmin) {
     return (
       <div className="app">
-        <div className="notice">
+        {masthead}
+        <div className="notice notice-info">
           <h2>Not available</h2>
           <p>This page is not available for this account.</p>
           <p><a href="/">Back to the dashboard</a></p>
@@ -83,16 +100,7 @@ export function NamingPage() {
 
   return (
     <div className="app naming-page">
-      <header className="masthead">
-        <div className="masthead-brand">
-          <img className="masthead-logo" src="/favicon-48.png" alt="" aria-hidden="true" />
-          <div className="masthead-text">
-            <h1>INSTRUBYTE</h1>
-            <span className="masthead-tagline">Admin</span>
-          </div>
-        </div>
-        <a className="signout-btn admin-back" href="/">&larr; Dashboard</a>
-      </header>
+      {masthead}
 
       {/* One thing at a time. The page used to be every setting of every
           meter in one scroll; three tabs answer "what am I here to do". */}

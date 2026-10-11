@@ -35,9 +35,8 @@ import { MallOverview, MallEntry } from './components/MallOverview'
 import { MallAlertHistory } from './components/MallAlertHistory'
 import { Billing } from './components/Billing'
 import { NamingPage } from './components/NamingPage'
-import { ThemeToggle } from './components/ThemeToggle'
+import { Masthead, formatInterval } from './components/Masthead'
 import { AlertToasts } from './components/AlertToasts'
-import { AlertBell } from './components/AlertBell'
 import { AlertHistory } from './components/AlertHistory'
 import { signOutUser } from './auth'
 
@@ -133,6 +132,17 @@ function Dashboard() {
   const pickerShown = !mallView && resolved && realUser && !deviceAccess.loading
     && deviceAccess.devices.length > 1 && !deviceId
   const openMall = (cid, cname) => { setMallView({ id: cid, name: cname }); setMallPage('wall') }
+  // Signed in at all, as opposed to `ready` (a device is open). The header's
+  // theme switch and Sign out follow this one: they belong to the account.
+  const signedIn = Boolean(resolved && realUser)
+  // The single-device dashboard is the thing on screen - not the picker, and
+  // not a mall page opened over a device chosen earlier.
+  const onDevice = ready && !mallView
+  // Back to the picker from anywhere, with nothing left open behind it: a
+  // mall page or an alert log would otherwise reappear over the next device.
+  const switchDevice = () => { setChosenDeviceId(null); setMallView(null); setShowAlertHistory(false) }
+  // Where closing a mall page lands: the device behind it, or the picker.
+  const mallBackLabel = ready ? `Back to ${deviceName}` : 'All devices'
   // Viewer and operator are equivalent for *reading* telemetry (`ready`
   // above doesn't distinguish them), but not for VFD control: only an
   // operator, or a global admin regardless of their per-device role, may
@@ -386,22 +396,24 @@ function Dashboard() {
   return (
     <div className="app">
       <Masthead
-        deviceName={ready ? deviceName : null}
+        deviceName={onDevice ? deviceName : null}
         partners={mallView ? brandsForCompany(mallView.id) : ready ? brandsFor(deviceId) : undefined}
         periodMs={periodMs}
-        email={ready ? user?.email : null}
+        signedIn={signedIn}
+        email={user?.email}
         onSignOut={signOutUser}
         theme={theme}
         onThemeChange={setTheme}
-        canSwitchDevice={ready && deviceAccess.devices.length > 1}
-        onSwitchDevice={() => setChosenDeviceId(null)}
-        alertLog={ready ? alertCenter.log : EMPTY_LOG}
+        canSwitchDevice={signedIn && !pickerShown && deviceAccess.devices.length > 1}
+        onSwitchDevice={switchDevice}
+        link={isAdmin ? { href: '/naming', label: 'Admin' } : null}
+        alertLog={onDevice ? alertCenter.log : null}
         onClearAlerts={alertCenter.clearLog}
         onOpenHistory={() => setShowAlertHistory(true)}
         nowMs={now}
       />
 
-      {ready && (
+      {onDevice && (
         <AlertToasts toasts={alertCenter.toasts} onDismiss={alertCenter.dismissToast} />
       )}
 
@@ -467,6 +479,7 @@ function Dashboard() {
           onOpenLog={() => setMallPage('log')}
           onOpenBilling={companyPremium ? () => setMallPage('billing') : null}
           premium={companyPremium}
+          backLabel={mallBackLabel}
           onClose={() => setMallView(null)}
         />
       )}
@@ -712,9 +725,6 @@ const CLEARED = '/cleared'
 // the component a fresh empty object on every chart tick.
 const EMPTY_TABLE = { columns: [], groups: [], rows: [] }
 
-// Same reasoning, for the alert bell before a device is ready to have one.
-const EMPTY_LOG = []
-
 /**
  * One figure from the selected window. `live` marks the only one of the four
  * that is a present-tense reading rather than a summary of the range, because a
@@ -735,73 +745,6 @@ function Stat({ label, tag, value, live = false }) {
         {unit && value != null && <span className="stat-unit">{unit}</span>}
       </dd>
     </div>
-  )
-}
-
-function Masthead({
-  deviceName, periodMs, email, onSignOut, theme, onThemeChange,
-  canSwitchDevice, onSwitchDevice, alertLog, onClearAlerts, nowMs, onOpenHistory,
-  partners = [],
-}) {
-  return (
-    <header className="masthead">
-      <div className="masthead-brand">
-        {/* Decorative: the wordmark beside it already names the company, so a
-            screen reader gaining nothing from "image" would only add noise. */}
-        <img className="masthead-logo" src="/favicon-48.png" alt="" aria-hidden="true" />
-        <div className="masthead-text">
-          <h1>INSTRUBYTE</h1>
-          <span className="masthead-tagline">Telemetry</span>
-        </div>
-        {/* The client's own marks, for the device on screen (lib/brands.js).
-            Real alt text here: unlike the Instrubyte mark, nothing else on
-            the page names these organisations. */}
-        {partners.length > 0 && (
-          <div className="masthead-partners">
-            {partners.map((p) => (
-              <img
-                key={p.src}
-                className={`masthead-partner${p.bare ? ' masthead-partner-bare' : ''}`}
-                src={p.src}
-                alt={p.alt}
-              />
-            ))}
-          </div>
-        )}
-      </div>
-      <div className="masthead-right">
-        {deviceName && (
-          <span className="device">
-            {deviceName}
-            {periodMs ? ` · every ${formatInterval(periodMs)}` : ''}
-          </span>
-        )}
-        {canSwitchDevice && (
-          <button type="button" className="switch-btn" onClick={onSwitchDevice}>
-            Switch device
-          </button>
-        )}
-        {/* Only a signed-in, authorized session ever gets an email to show -
-            App.jsx passes null on every other screen, sign-in form included,
-            where there is nothing yet to sign out of. The theme toggle and
-            alert bell are gated the same way: nothing to persist a preference
-            or an alert log against before then. */}
-        {email && (
-          <AlertBell
-            log={alertLog}
-            onClear={onClearAlerts}
-            nowMs={nowMs}
-            onOpenHistory={onOpenHistory}
-          />
-        )}
-        {email && <ThemeToggle theme={theme} onChange={onThemeChange} />}
-        {email && (
-          <button type="button" className="signout-btn" onClick={onSignOut} title={email}>
-            Sign out
-          </button>
-        )}
-      </div>
-    </header>
   )
 }
 
@@ -827,6 +770,3 @@ function NotAuthorized({ email, onSignOut }) {
     </div>
   )
 }
-
-const formatInterval = (ms) =>
-  ms >= 60000 ? `${Math.round(ms / 60000)}m` : `${(ms / 1000).toFixed(ms < 10000 ? 1 : 0)}s`

@@ -33,6 +33,7 @@ import { MallHistory } from './MallHistory'
  */
 export function MallOverview({
   companyId, companyName, onOpenDevice, onClose, nowMs, onOpenLog, onOpenBilling, premium = false,
+  backLabel = 'Back',
 }) {
   const [sortKey, setSortKey] = useState('attention')
   // Which reading each tenant shows on its dial, chosen by clicking one of
@@ -67,7 +68,7 @@ export function MallOverview({
       <div className="notice notice-warn">
         <h2>Overview unavailable</h2>
         <p>Could not read this company&apos;s overview: {error.message || String(error)}</p>
-        {onClose && <BackButton onClick={onClose}>Back to dashboard</BackButton>}
+        {onClose && <BackButton onClick={onClose}>{backLabel}</BackButton>}
       </div>
     )
   }
@@ -89,7 +90,7 @@ export function MallOverview({
   return (
     <div className="mall">
       {paused && <PausedNotice onResume={resume} />}
-      {onClose && <BackButton onClick={onClose}>Back to dashboard</BackButton>}
+      {onClose && <BackButton onClick={onClose}>{backLabel}</BackButton>}
       <div className="mall-head">
         <div>
           <h2>{companyName || 'All tenants'}</h2>
