@@ -384,6 +384,19 @@
     // What leaks is the fact that "device X shows its Current tag" - tag
     // NAMES, never readings, never thresholds, never who owns what. A
     // reading still requires membership of a company holding that device.
+    // What a mall's Telegram group is told about, set on the admin page
+    // (components/AlarmSettings.jsx) and read by the server when a box
+    // reports an alert (functions/telegram.js). 'limits' or 'all'; removing
+    // the key switches the mall off. Admins only, both ways - it decides
+    // where notifications about a customer's site are sent.
+    "telegramNotify": {
+      ".read": "auth != null && auth.token.firebase.sign_in_provider !== 'anonymous' && root.child('admins/'+auth.uid).val() === true",
+      "$companyId": {
+        ".write": "auth != null && auth.token.firebase.sign_in_provider !== 'anonymous' && root.child('admins/'+auth.uid).val() === true",
+        ".validate": "newData.val() === 'limits' || newData.val() === 'all'"
+      }
+    },
+
     "mallDisplay": {
       ".read": "auth != null && auth.token.firebase.sign_in_provider !== 'anonymous'",
       "$deviceId": {

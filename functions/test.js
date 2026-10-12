@@ -2757,3 +2757,109 @@ test('mallOverview: the snapped range always contains everything that was seen',
     }
   }
 });
+
+// ---------------------------------------------------------------------------
+//  Telegram notifications (telegram.js)
+// ---------------------------------------------------------------------------
+
+const TG = require('./telegram');
+
+const tgSpike = (over = {}) => ({
+  ts: Date.UTC(2026, 9, 12, 14, 42), device: 'ayala-box1-5', tagKey: 'Current', tagName: 'Current',
+  kind: 'spike', level: 'warning', value: 12.44, ...over,
+});
+
+const tgModes = { 'ayala-box1': 'limits', 'amcb-4th-floor-zone-3': 'all', 'umpd-mcwd': 'nonsense' };
+const tgCompanies = { 'ayala-box1': { name: 'AMCB 4th Floor IT Services' }, 'new-mall': { name: 'North Wing' } };
+
+test('telegram: only meters in a mall with a setting are announced', () => {
+  const t = (owning, modes = tgModes) => TG.notifyTargetFor(owning, modes, tgCompanies);
+  assert.equal(t(['ayala-box1']).label, 'IT Services');
+  assert.equal(t(['rh-internal', 'amcb-4th-floor-zone-3']).label, 'Zone 3');
+  // A mall with no short label uses its stored name.
+  assert.equal(t(['new-mall'], { 'new-mall': 'limits' }).label, 'North Wing');
+  assert.equal(t(['rh-internal']), null, 'no setting');
+  assert.equal(t(['umpd-mcwd']), null, 'a setting that is not one of the modes');
+  assert.equal(t([]), null);
+  assert.equal(t(['ayala-box1'], {}), null, 'switched off');
+  assert.equal(TG.shouldNotify({ alert: tgSpike({ kind: 'alarm-high' }), target: null }), false);
+});
+
+test('telegram: "limits" announces limits only, "all" adds spikes, a clear is never announced', () => {
+  const limits = TG.notifyTargetFor(['ayala-box1'], tgModes, tgCompanies);
+  const all = TG.notifyTargetFor(['amcb-4th-floor-zone-3'], tgModes, tgCompanies);
+  for (const kind of ['alarm-high', 'alarm-low']) {
+    assert.equal(TG.shouldNotify({ alert: tgSpike({ kind }), target: limits }), true, kind);
+    assert.equal(TG.shouldNotify({ alert: tgSpike({ kind }), target: all }), true, kind);
+  }
+  assert.equal(TG.shouldNotify({ alert: tgSpike(), target: limits }), false);
+  assert.equal(TG.shouldNotify({ alert: tgSpike(), target: all }), true);
+  for (const target of [limits, all]) {
+    assert.equal(TG.shouldNotify({ alert: tgSpike({ kind: 'alarm-clear' }), target }), false);
+    assert.equal(TG.shouldNotify({ alert: null, target }), false);
+  }
+});
+
+test('telegram: the same reading is not announced again inside the cooldown, nor twice for one event', () => {
+  const a = tgSpike({ kind: 'alarm-high' });
+  const target = TG.notifyTargetFor(['ayala-box1'], tgModes, tgCompanies);
+  const ask = (lastSentTs) => TG.shouldNotify({ alert: a, target, lastSentTs });
+  assert.equal(ask(a.ts), false, 'the same event delivered twice');
+  assert.equal(ask(a.ts - 60000), false, 'a minute later');
+  assert.equal(ask(a.ts - TG.TELEGRAM_COOLDOWN_MS + 1), false);
+  assert.equal(ask(a.ts - TG.TELEGRAM_COOLDOWN_MS), true);
+  assert.equal(ask(undefined), true, 'never announced before');
+});
+
+test('telegram: the message names the mall and the store, in Philippine time', () => {
+  assert.equal(
+    TG.telegramText({ alert: tgSpike(), mallLabel: 'IT Services', meterName: 'Wow Travel', unit: 'A' }),
+    'IT Services - Wow Travel: Current spiked to 12.4 A (10:42 PM)',
+  );
+  // No name set: the device id, never a blank.
+  assert.equal(
+    TG.telegramText({ alert: tgSpike({ value: undefined }), mallLabel: 'Zone 3', meterName: '', unit: 'A' }),
+    'Zone 3 - ayala-box1-5: Current spiked (10:42 PM)',
+  );
+  assert.equal(
+    TG.telegramText({
+      alert: tgSpike({ kind: 'alarm-high', tagName: 'Voltage', value: 254.2 }),
+      mallLabel: 'Zone 3', meterName: 'GONG CHA', unit: 'V',
+    }),
+    'Zone 3 - GONG CHA: Voltage exceeded its high limit, now 254 V (10:42 PM)',
+  );
+});
+
+test('telegram: sending posts once to the bot, and a failure is reported rather than thrown', async () => {
+  const calls = [];
+  const ok = await TG.sendTelegram({
+    token: 'T0KEN', chatId: '-100', text: 'hello',
+    fetchImpl: async (url, init) => {
+      calls.push({ url, init });
+      return { ok: true, status: 200, json: async () => ({ ok: true }) };
+    },
+  });
+  assert.deepEqual(ok, { ok: true, status: 200, description: '' });
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].url, 'https://api.telegram.org/botT0KEN/sendMessage');
+  assert.deepEqual(JSON.parse(calls[0].init.body), { chat_id: '-100', text: 'hello', disable_web_page_preview: true });
+
+  const refused = await TG.sendTelegram({
+    token: 'T0KEN', chatId: '-100', text: 'hello',
+    fetchImpl: async () => ({ ok: false, status: 403, json: async () => ({ description: 'bot is not a member' }) }),
+  });
+  assert.deepEqual(refused, { ok: false, status: 403, description: 'bot is not a member' });
+
+  const down = await TG.sendTelegram({
+    token: 'T0KEN', chatId: '-100', text: 'hello',
+    fetchImpl: async () => { throw new TypeError('fetch failed'); },
+  });
+  assert.equal(down.ok, false);
+  assert.ok(!JSON.stringify(down).includes('T0KEN'), 'the token never appears in what is logged');
+
+  // Not configured: nothing is sent at all.
+  let touched = false;
+  const none = await TG.sendTelegram({ token: '', chatId: '-100', text: 'x', fetchImpl: async () => { touched = true; } });
+  assert.equal(none.ok, false);
+  assert.equal(touched, false);
+});

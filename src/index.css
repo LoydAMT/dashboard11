@@ -958,6 +958,39 @@ body {
   .naming-page .seg button, .naming-page .malldisp-tag { min-height: 40px; }
 }
 
+/* Alarms: a mall's limits and its Telegram setting (components/AlarmSettings.jsx). */
+.alarm-telegram { flex-basis: 100%; display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; }
+.alarm-telegram-label { font-size: .78rem; font-weight: 640; color: var(--text-dim); }
+.alarm-telegram-hint { flex-basis: 100%; margin: 0; }
+.alarm-tags { align-self: flex-start; flex-wrap: wrap; }
+.alarm-all {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 8px;
+  padding: 8px 10px; border-radius: 8px; background: var(--surface-2);
+}
+.alarm-all-label { font-size: .82rem; font-weight: 620; margin-right: auto; }
+.alarm-all .thresholds-input, .alarm-table .thresholds-input { width: 7rem; max-width: 100%; }
+.alarm-table { margin-top: 0; }
+.alarm-meter { white-space: normal; overflow-wrap: anywhere; }
+.alarm-table .is-edited .thresholds-input { border-color: var(--accent); }
+.alarm-save { flex-wrap: wrap; }
+@media (max-width: 620px) {
+  .alarm-telegram .ranges { flex: 1 1 100%; }
+  .alarm-telegram .range-btn { flex: 1 1 0; min-height: 40px; }
+  .alarm-tags { width: 100%; }
+  .alarm-tags .range-btn { flex: 1 1 0; min-height: 40px; }
+  .alarm-all-label { flex-basis: 100%; }
+  .alarm-all .thresholds-input { flex: 1 1 0; width: auto; min-height: 40px; }
+  .alarm-all .signout-btn { flex: 1 1 100%; }
+  .alarm-table thead { display: none; }
+  .alarm-table tr { display: flex; flex-wrap: wrap; gap: 6px; padding: 8px 0; border-top: 1px solid var(--border); }
+  .alarm-table td { padding: 0; }
+  .alarm-table .alarm-meter { flex-basis: 100%; font-weight: 620; }
+  .alarm-table td[data-label] { flex: 1 1 0; display: flex; flex-direction: column; gap: 2px; }
+  .alarm-table td[data-label]::before { content: attr(data-label); font-size: .72rem; color: var(--text-faint); }
+  .alarm-table .thresholds-input { width: 100%; min-height: 40px; box-sizing: border-box; }
+  .alarm-save .signout-btn { flex: 1 1 0; }
+}
+
 /* Malls: create one, pick its meters (components/CompanyManager.jsx). */
 .company-new { margin: 10px 0 4px; }
 .company-edit {

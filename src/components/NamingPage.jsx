@@ -11,6 +11,7 @@ import { MallDisplay } from './MallDisplay'
 import { GaugeDisplay } from './GaugeDisplay'
 import { CompanyPlans } from './CompanyPlans'
 import { CompanyManager } from './CompanyManager'
+import { AlarmSettings } from './AlarmSettings'
 import { SignIn } from './SignIn'
 import { Masthead } from './Masthead'
 import { useTheme } from '../hooks/useTheme'
@@ -121,13 +122,14 @@ export function NamingPage() {
       {tab === 'meters' && (
         <MeterList devices={deviceAccess.devices} loading={deviceAccess.loading} mayRename={mayRename} />
       )}
+      {tab === 'alarms' && <AlarmSettings />}
       {tab === 'malls' && <CompanyManager uid={user.uid} knownDevices={knownDevices} />}
       {tab === 'plans' && <CompanyPlans />}
     </div>
   )
 }
 
-const TABS = [['meters', 'Meters'], ['malls', 'Malls'], ['plans', 'Plans']]
+const TABS = [['meters', 'Meters'], ['alarms', 'Alarms'], ['malls', 'Malls'], ['plans', 'Plans']]
 
 // The open tab lives in the address (#malls), so a reload or a shared link
 // lands on the same one.

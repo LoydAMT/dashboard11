@@ -83,12 +83,17 @@ const { cachedRead } = require('./sweepCache');
 const { parseFilters, runFiltered } = require('./alertQuery');
 const { createBillingApi, createBillingSend } = require('./billingHandlers');
 const { PREMIUM } = require('./plans');
+const { notifyTargetFor, shouldNotify, telegramText, sendTelegram } = require('./telegram');
 
 if (getApps().length === 0) {
   initializeApp();
 }
 
 const ARCHIVE_RELAY_KEY = defineSecret('ARCHIVE_RELAY_KEY');
+// The Telegram bot that announces box alerts, and the group it posts to
+// (telegram.js). Secrets, so neither is in the repository or the web app.
+const TELEGRAM_BOT_TOKEN = defineSecret('TELEGRAM_BOT_TOKEN');
+const TELEGRAM_CHAT_ID = defineSecret('TELEGRAM_CHAT_ID');
 
 // Receives minute-rollup packages from the edge device (Wecon RH-W / Lua)
 // and archives them into Firestore at devices/{device}/archive/{tag}_{hour}.
@@ -636,7 +641,7 @@ for (const device of LIVE_ALERT_DEVICES) {
 // at once, and two of them deciding against the same stale state would file
 // the same crossing twice.
 exports.boxAlertEvent = onValueCreated(
-  { ...TRIGGER_OPTS, ref: '/alertEvents/{device}/{eventId}' },
+  { ...TRIGGER_OPTS, ref: '/alertEvents/{device}/{eventId}', secrets: [TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID] },
   async (event) => {
     const { device, eventId } = event.params;
     const rtdb = getDatabase();
@@ -652,12 +657,22 @@ exports.boxAlertEvent = onValueCreated(
       return;
     }
 
-    const companies = (await rtdb.ref('companies').once('value')).val() || {};
+    // telegramNotify/ is a word per mall, set on the admin page. Read with
+    // companies/ rather than cached, so a change there takes effect on the
+    // very next alert.
+    const [companiesSnap, notifySnap] = await Promise.all([
+      rtdb.ref('companies').once('value'),
+      rtdb.ref('telegramNotify').once('value'),
+    ]);
+    const companies = companiesSnap.val() || {};
     const owning = companiesByDevice(companies)[device] || [];
     const stateRef = fs.collection('alertLive').doc(device);
+    // Null for a meter in no mall that posts to the group (telegram.js).
+    const target = notifyTargetFor(owning, notifySnap.val() || {}, companies);
 
     let filed = null;
     let tagsAfter = null;
+    let announce = false;
     await fs.runTransaction(async (tx) => {
       const snap = await tx.get(stateRef);
       const tags = (snap.exists && snap.data().tags) || {};
@@ -665,6 +680,11 @@ exports.boxAlertEvent = onValueCreated(
 
       filed = alert;
       tagsAfter = next === undefined ? tags : { ...tags, [ev.tagKey]: next };
+      // Decided inside the transaction, against when this reading was last
+      // announced, and recorded in the same write - so two events arriving
+      // together, or one delivered twice, cannot both post.
+      const sent = (snap.exists && snap.data().telegram) || {};
+      announce = shouldNotify({ alert, target, lastSentTs: sent[ev.tagKey] });
 
       const patch = {};
       if (next !== undefined && tags[ev.tagKey] !== next) patch.tags = { [ev.tagKey]: next };
@@ -678,8 +698,36 @@ exports.boxAlertEvent = onValueCreated(
           ts: alert.ts, kind: alert.kind, level: alert.level || 'info', message: alert.message,
         };
       }
+      if (announce) patch.telegram = { [ev.tagKey]: alert.ts };
       if (Object.keys(patch).length > 0) tx.set(stateRef, patch, { merge: true });
     });
+
+    // After the alert is filed, and never allowed to fail it: the log is the
+    // record, the message is a courtesy. Two small reads, only for an alert
+    // that is actually announced - the meter's display name and the unit.
+    if (announce) {
+      try {
+        const [nameSnap, unitSnap] = await Promise.all([
+          rtdb.ref(`naming/${device}`).once('value'),
+          rtdb.ref(`devices/${device}/tags/${filed.tagKey}/unit`).once('value'),
+        ]);
+        const name = nameSnap.val();
+        const unit = unitSnap.val();
+        const r = await sendTelegram({
+          token: TELEGRAM_BOT_TOKEN.value(),
+          chatId: TELEGRAM_CHAT_ID.value(),
+          text: telegramText({
+            alert: filed,
+            mallLabel: target.label,
+            meterName: typeof name === 'string' && name ? name : device,
+            unit: typeof unit === 'string' ? unit : '',
+          }),
+        });
+        if (!r.ok) console.error(`boxAlertEvent: ${device} Telegram refused (${r.status}) ${r.description}`);
+      } catch (err) {
+        console.error(`boxAlertEvent: ${device} Telegram failed`, err && err.name);
+      }
+    }
 
     if (filed) {
       console.log(`boxAlertEvent: ${device} -> ${filed.kind} ${filed.tagKey}` +
