@@ -12,6 +12,8 @@ import { formatAgo } from '../lib/time'
 import { kwhSoFar, liveKwhOf } from '../lib/kwh'
 import { BackButton } from './BackButton'
 import { MallHistory } from './MallHistory'
+import { AlertToasts } from './AlertToasts'
+import { useMallAlertToasts } from '../hooks/useMallAlertToasts'
 
 /**
  * Every tenant in a mall, on ONE page, each with its own dial.
@@ -62,6 +64,10 @@ export function MallOverview({
   // One read for the whole estate's display preferences, set on the admin
   // page. Per-device reads would be the fan-out this page exists to avoid.
   const display = useRtdbValue('mallDisplay', true)
+  // A notice for a limit breached while this page is open. Built from the
+  // newest-alert line each tenant already carries in the one subscription
+  // above, so it costs no read of its own.
+  const notices = useMallAlertToasts(tenants)
 
   if (error) {
     return (
@@ -89,6 +95,7 @@ export function MallOverview({
 
   return (
     <div className="mall">
+      <AlertToasts toasts={notices.toasts} onDismiss={notices.dismiss} />
       {paused && <PausedNotice onResume={resume} />}
       {onClose && <BackButton onClick={onClose}>{backLabel}</BackButton>}
       <div className="mall-head">
@@ -183,7 +190,10 @@ export function MallOverview({
                   {formatAgo(nowMs - t.lastAlert.ts)}
                 </span>
                 <span className="mall-recent-who">{t.name}</span>
-                <span className="mall-recent-what">{t.lastAlert.message}</span>
+                <span className="mall-recent-what">
+                  {t.lastAlert.message}
+                  {t.lastAlert.tg && <span className="tg-badge" title="A message about this was sent to the Telegram group">Telegram</span>}
+                </span>
               </li>
             ))}
           </ul>

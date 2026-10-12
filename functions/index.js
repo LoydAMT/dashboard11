@@ -702,33 +702,6 @@ exports.boxAlertEvent = onValueCreated(
       if (Object.keys(patch).length > 0) tx.set(stateRef, patch, { merge: true });
     });
 
-    // After the alert is filed, and never allowed to fail it: the log is the
-    // record, the message is a courtesy. Two small reads, only for an alert
-    // that is actually announced - the meter's display name and the unit.
-    if (announce) {
-      try {
-        const [nameSnap, unitSnap] = await Promise.all([
-          rtdb.ref(`naming/${device}`).once('value'),
-          rtdb.ref(`devices/${device}/tags/${filed.tagKey}/unit`).once('value'),
-        ]);
-        const name = nameSnap.val();
-        const unit = unitSnap.val();
-        const r = await sendTelegram({
-          token: TELEGRAM_BOT_TOKEN.value(),
-          chatId: TELEGRAM_CHAT_ID.value(),
-          text: telegramText({
-            alert: filed,
-            mallLabel: target.label,
-            meterName: typeof name === 'string' && name ? name : device,
-            unit: typeof unit === 'string' ? unit : '',
-          }),
-        });
-        if (!r.ok) console.error(`boxAlertEvent: ${device} Telegram refused (${r.status}) ${r.description}`);
-      } catch (err) {
-        console.error(`boxAlertEvent: ${device} Telegram failed`, err && err.name);
-      }
-    }
-
     if (filed) {
       console.log(`boxAlertEvent: ${device} -> ${filed.kind} ${filed.tagKey}` +
         (filed.value !== undefined ? ` = ${filed.value}` : ''));
@@ -748,6 +721,52 @@ exports.boxAlertEvent = onValueCreated(
       } catch (err) {
         // A convenience view; the alert itself is already filed.
         console.error(`boxAlertEvent: ${device} overview update failed`, err);
+      }
+    }
+
+    // Telegram, AFTER the dashboard has the alarm: a message that takes a
+    // second to send must not hold up the tile turning red. Never allowed to
+    // fail the alert either - the log is the record, the message a courtesy.
+    // Two small reads, only for an alert that is actually announced: the
+    // meter's display name and the unit.
+    if (announce) {
+      try {
+        const [nameSnap, unitSnap] = await Promise.all([
+          rtdb.ref(`naming/${device}`).once('value'),
+          rtdb.ref(`devices/${device}/tags/${filed.tagKey}/unit`).once('value'),
+        ]);
+        const name = nameSnap.val();
+        const unit = unitSnap.val();
+        const r = await sendTelegram({
+          token: TELEGRAM_BOT_TOKEN.value(),
+          chatId: TELEGRAM_CHAT_ID.value(),
+          text: telegramText({
+            alert: filed,
+            mallLabel: target.label,
+            meterName: typeof name === 'string' && name ? name : device,
+            unit: typeof unit === 'string' ? unit : '',
+          }),
+        });
+        if (!r.ok) {
+          console.error(`boxAlertEvent: ${device} Telegram refused (${r.status}) ${r.description}`);
+        } else {
+          // Said on the dashboard too, and only once Telegram has accepted
+          // it: the alert's own record, and the mall page's newest-alert
+          // line (which is what raises the notice there).
+          const marks = {};
+          for (const companyId of overviewCompanies(companies)) {
+            if (owning.includes(companyId)) {
+              marks[`mallOverview/${companyId}/tenants/${device}/lastAlert/tg`] = true;
+            }
+          }
+          await Promise.all([
+            fs.collection('devices').doc(device).collection('alerts').doc(alertId(filed))
+              .set({ telegram: true }, { merge: true }),
+            Object.keys(marks).length > 0 ? rtdb.ref().update(marks) : null,
+          ]);
+        }
+      } catch (err) {
+        console.error(`boxAlertEvent: ${device} Telegram failed`, err && err.name);
       }
     }
 

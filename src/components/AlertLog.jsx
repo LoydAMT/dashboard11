@@ -281,7 +281,10 @@ function AlertResults({ scope, filters, names, showTenant, nowMs, onOpenDevice, 
                   </button>
                 )}
                 <span className={`alog-kind kind-${a.kind}`}>{KIND_LABEL[a.kind] || a.kind}</span>
-                <span className="alog-msg">{a.message}</span>
+                <span className="alog-msg">
+                  {a.message}
+                  {a.telegram && <span className="tg-badge" title="A message about this was sent to the Telegram group">Telegram</span>}
+                </span>
                 {typeof a.value === 'number' && (
                   <span className="alog-val">
                     {fmtValue(a.value)}

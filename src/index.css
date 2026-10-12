@@ -958,6 +958,14 @@ body {
   .naming-page .seg button, .naming-page .malldisp-tag { min-height: 40px; }
 }
 
+/* "A message about this went to the Telegram group" - on an alert row and
+   on the mall page's recent strip. */
+.tg-badge {
+  display: inline-block; margin-left: 6px; padding: 0 6px; border-radius: 999px;
+  font-size: .68rem; font-weight: 600; white-space: nowrap; vertical-align: 1px;
+  color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+
 /* Alarms: a mall's limits and its Telegram setting (components/AlarmSettings.jsx). */
 .alarm-telegram { flex-basis: 100%; display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; }
 .alarm-telegram-label { font-size: .78rem; font-weight: 640; color: var(--text-dim); }
