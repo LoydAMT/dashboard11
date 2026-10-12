@@ -673,6 +673,7 @@ exports.boxAlertEvent = onValueCreated(
     let filed = null;
     let tagsAfter = null;
     let announce = false;
+    let settled = false;
     await fs.runTransaction(async (tx) => {
       const snap = await tx.get(stateRef);
       const tags = (snap.exists && snap.data().tags) || {};
@@ -688,6 +689,9 @@ exports.boxAlertEvent = onValueCreated(
 
       const patch = {};
       if (next !== undefined && tags[ev.tagKey] !== next) patch.tags = { [ev.tagKey]: next };
+      // The tag's state moved with nothing to record - its limit was removed
+      // while it stood in alarm. The tile still has to stop saying so.
+      settled = !alert && next !== undefined && (tags[ev.tagKey] || 'ok') !== next;
       if (alert) {
         // Deterministic id + set(): the database delivers at least once, and
         // a second delivery overwrites with identical content.
@@ -720,6 +724,21 @@ exports.boxAlertEvent = onValueCreated(
         if (Object.keys(updates).length > 0) await rtdb.ref().update(updates);
       } catch (err) {
         // A convenience view; the alert itself is already filed.
+        console.error(`boxAlertEvent: ${device} overview update failed`, err);
+      }
+    }
+
+    // A limit removed from a meter that was in alarm: clear the tile's colour
+    // now instead of leaving it for the next sweep, up to two minutes on.
+    if (settled) {
+      try {
+        const updates = {};
+        for (const companyId of overviewCompanies(companies)) {
+          if (!owning.includes(companyId)) continue;
+          updates[`mallOverview/${companyId}/tenants/${device}/alarm`] = worstAlarm(tagsAfter);
+        }
+        if (Object.keys(updates).length > 0) await rtdb.ref().update(updates);
+      } catch (err) {
         console.error(`boxAlertEvent: ${device} overview update failed`, err);
       }
     }
