@@ -181,11 +181,6 @@ exports.readArchive = onRequest(
 // devices exist.
 const SEED_DEVICES = [
   'RHW01',
-  // wecon2 and wecon3 are SHARED boxes: the box id itself is also the first
-  // tenant, so it keeps publishing readings rather than sitting online with
-  // nothing to show.
-  'wecon2', 'wecon2-c2', 'wecon2-c3',
-  'wecon3', 'wecon3-c2', 'wecon3-c3',
 ];
 
 /**
