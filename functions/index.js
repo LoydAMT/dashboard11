@@ -84,6 +84,7 @@ const { parseFilters, runFiltered } = require('./alertQuery');
 const { createBillingApi, createBillingSend } = require('./billingHandlers');
 const { PREMIUM } = require('./plans');
 const { notifyTargetFor, shouldNotify, telegramText, sendTelegram } = require('./telegram');
+const { createPasswordReset, checkLimit: checkResetLimit } = require('./passwordReset');
 
 if (getApps().length === 0) {
   initializeApp();
@@ -1605,5 +1606,60 @@ exports.billingSend = onRequest(
     ...billingDeps,
     apiKey: () => RESEND_API_KEY.value(),
     fromAddress: BILLING_FROM,
+  }),
+);
+
+// ---------------------------------------------------------------------------
+//  Password reset email
+// ---------------------------------------------------------------------------
+//
+// "Forgot your password?" on the sign-in page. Firebase still makes the reset
+// link and still owns the page it opens; this only sends the email around
+// it, through Resend from our own domain, because Firebase's own template is
+// locked for this project. See passwordReset.js for what it must not do.
+
+// Any address on the verified domain may send (see BILLING_FROM above).
+const RESET_FROM = process.env.RESET_FROM || 'Instrubyte Telemetry <no-reply@contact.instrubyte.com.ph>';
+// Where "Continue" on Firebase's page leads once the password is changed,
+// and where the header image is served from.
+const SITE_URL = process.env.SITE_URL || 'https://www.instrubytemonitoring.com';
+
+exports.passwordReset = onRequest(
+  // Small and capped: anyone can call this, so it must not be able to run
+  // up many instances at once.
+  { region: 'asia-southeast1', secrets: [RESEND_API_KEY], maxInstances: 3, timeoutSeconds: 30 },
+  createPasswordReset({
+    generateLink: async (email) => {
+      // Asked first, because with email-enumeration protection on (it is,
+      // for this project) the link call does not say "no such account" - it
+      // fails with a bare internal error, indistinguishable from a real one.
+      // This throws auth/user-not-found, which the handler answers quietly.
+      await getAuth().getUserByEmail(email);
+      try {
+        return await getAuth().generatePasswordResetLink(email, { url: SITE_URL });
+      } catch (err) {
+        // The site not being on the project's authorized-domain list must
+        // not stop a reset; the link then simply has no "Continue" button.
+        if (err && (err.code === 'auth/user-not-found' || err.code === 'auth/email-not-found')) throw err;
+        console.error(`passwordReset: link with a continue address refused (${err && err.code}) ` +
+          String((err && err.message) || '').slice(0, 300));
+        return getAuth().generatePasswordResetLink(email);
+      }
+    },
+    // One document per address (hashed), read and written in a transaction
+    // so two requests at once cannot both be granted the same turn.
+    takeTurn: async (key, now) => {
+      const ref = getFirestore().collection('passwordResets').doc(key);
+      return getFirestore().runTransaction(async (tx) => {
+        const snap = await tx.get(ref);
+        const r = checkResetLimit(snap.exists ? snap.data() : null, now);
+        if (r.allowed) tx.set(ref, r.next);
+        return r;
+      });
+    },
+    apiKey: () => RESEND_API_KEY.value(),
+    fromAddress: RESET_FROM,
+    logoUrl: `${SITE_URL}/favicon-48.png`,
+    log: (msg) => console.error(msg),
   }),
 );

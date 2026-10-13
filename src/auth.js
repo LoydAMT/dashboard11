@@ -17,6 +17,7 @@ import {
   onAuthStateChanged,
 } from 'firebase/auth'
 import { auth } from './firebase'
+import { functionUrl } from './lib/functionUrl'
 
 export function signIn(email, password) {
   return signInWithEmailAndPassword(auth, email, password)
@@ -26,8 +27,34 @@ export function signOutUser() {
   return signOut(auth)
 }
 
-/** Sends a reset link to an existing account's own address. Never creates one. */
-export function resetPassword(email) {
+/**
+ * Sends a reset link to an existing account's own address. Never creates one.
+ *
+ * Our own email, sent by the passwordReset function from our own domain.
+ * If that cannot be reached, or its sender fails, Firebase's built-in email
+ * goes out instead - plainer, but nobody is left locked out because of a
+ * problem on our side. Being told to wait (too many requests) is NOT such a
+ * problem and is shown as it is.
+ */
+export async function resetPassword(email) {
+  const url = functionUrl('passwordReset')
+  if (url) {
+    let res = null
+    try {
+      res = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email }),
+      })
+    } catch {
+      // Unreachable - fall through to Firebase's own email.
+    }
+    if (res?.ok) return
+    if (res && (res.status === 400 || res.status === 429)) {
+      const body = await res.json().catch(() => ({}))
+      throw new Error(body.error || 'Could not send the reset email. Try again in a moment.')
+    }
+  }
   return sendPasswordResetEmail(auth, email)
 }
 

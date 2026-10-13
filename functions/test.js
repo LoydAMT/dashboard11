@@ -2863,3 +2863,115 @@ test('telegram: sending posts once to the bot, and a failure is reported rather 
   assert.equal(none.ok, false);
   assert.equal(touched, false);
 });
+
+// ---------------------------------------------------------------------------
+//  Password reset email (passwordReset.js)
+// ---------------------------------------------------------------------------
+
+const PR = require('./passwordReset');
+
+function resetHarness(over = {}) {
+  const sent = [];
+  const turns = new Map();
+  let clock = 1_800_000_000_000;
+  const handler = PR.createPasswordReset({
+    generateLink: async (email) => {
+      if (email === 'nobody@example.com') throw Object.assign(new Error('none'), { code: 'auth/user-not-found' });
+      return `https://example.test/reset?oobCode=abc&email=${encodeURIComponent(email)}`;
+    },
+    takeTurn: async (key, now) => {
+      const r = PR.checkLimit(turns.get(key) || null, now);
+      if (r.allowed) turns.set(key, r.next);
+      return r;
+    },
+    apiKey: () => 'KEY',
+    fromAddress: 'Instrubyte Telemetry <no-reply@contact.example>',
+    logoUrl: 'https://example.test/logo.png',
+    fetchImpl: async (url, init) => {
+      sent.push({ url, init, body: JSON.parse(init.body) });
+      return { ok: true, status: 200, json: async () => ({ id: 'msg_1' }) };
+    },
+    now: () => clock,
+    ...over,
+  });
+  const call = async (body, method = 'POST') => {
+    const res = makeRes();
+    res.set = () => res;
+    res.json = function json(b) { this.body = b; if (this.statusCode === null) this.statusCode = 200; return this; };
+    res.send = function send(b) { this.body = b; return this; };
+    await handler({ method, body, query: {} }, res);
+    return res;
+  };
+  return { call, sent, advance: (ms) => { clock += ms; } };
+}
+
+test('password reset: an existing account gets one email, from our address, with the link', async () => {
+  const h = resetHarness();
+  const res = await h.call({ email: '  Tenant@Example.com ' });
+  assert.equal(res.statusCode, 200);
+  assert.deepEqual(res.body, { ok: true });
+  assert.equal(h.sent.length, 1);
+  const m = h.sent[0];
+  assert.equal(m.url, 'https://api.resend.com/emails');
+  assert.equal(m.init.headers.Authorization, 'Bearer KEY');
+  assert.equal(m.body.from, 'Instrubyte Telemetry <no-reply@contact.example>');
+  assert.deepEqual(m.body.to, ['tenant@example.com']);
+  assert.match(m.body.html, /href="https:\/\/example\.test\/reset\?oobCode=abc&amp;email=tenant%40example\.com"/);
+  assert.match(m.body.text, /https:\/\/example\.test\/reset\?oobCode=abc&email=tenant%40example\.com/);
+});
+
+test('password reset: an address with no account gets the same answer and no email', async () => {
+  const h = resetHarness();
+  const res = await h.call({ email: 'nobody@example.com' });
+  assert.equal(res.statusCode, 200);
+  assert.deepEqual(res.body, { ok: true });
+  assert.equal(h.sent.length, 0);
+});
+
+test('password reset: one email a minute and five an hour per address, whether or not it exists', async () => {
+  const h = resetHarness();
+  assert.equal((await h.call({ email: 'a@example.com' })).statusCode, 200);
+  const again = await h.call({ email: 'a@example.com' });
+  assert.equal(again.statusCode, 429);
+  assert.ok(again.body.retrySeconds > 0 && again.body.retrySeconds <= 60);
+  // Another address is not held up by the first.
+  assert.equal((await h.call({ email: 'b@example.com' })).statusCode, 200);
+  // An address with no account is limited exactly the same way.
+  assert.equal((await h.call({ email: 'nobody@example.com' })).statusCode, 200);
+  assert.equal((await h.call({ email: 'nobody@example.com' })).statusCode, 429);
+
+  for (let i = 0; i < 4; i += 1) {
+    h.advance(PR.MIN_GAP_MS);
+    assert.equal((await h.call({ email: 'a@example.com' })).statusCode, 200, `email ${i + 2}`);
+  }
+  h.advance(PR.MIN_GAP_MS);
+  assert.equal((await h.call({ email: 'a@example.com' })).statusCode, 429, 'the sixth inside the hour');
+  h.advance(PR.WINDOW_MS);
+  assert.equal((await h.call({ email: 'a@example.com' })).statusCode, 200, 'a new hour');
+  assert.equal(h.sent.filter((m) => m.body.to[0] === 'a@example.com').length, 6);
+});
+
+test('password reset: bad input is refused before anything is looked up or sent', async () => {
+  const h = resetHarness();
+  for (const email of ['', 'not-an-email', 'a@b', 'two words@example.com']) {
+    assert.equal((await h.call({ email })).statusCode, 400, JSON.stringify(email));
+  }
+  assert.equal((await h.call({ email: 'a@example.com' }, 'GET')).statusCode, 405);
+  assert.equal(h.sent.length, 0);
+});
+
+test('password reset: a sender failure answers 502 so the page can fall back', async () => {
+  const refused = resetHarness({
+    fetchImpl: async () => ({ ok: false, status: 403, json: async () => ({ message: 'domain not verified' }) }),
+  });
+  assert.equal((await refused.call({ email: 'a@example.com' })).statusCode, 502);
+  const down = resetHarness({ fetchImpl: async () => { throw new TypeError('fetch failed'); } });
+  assert.equal((await down.call({ email: 'a@example.com' })).statusCode, 502);
+});
+
+test('password reset: the email cannot be broken by what is typed into it', () => {
+  const m = PR.buildResetEmail({ email: '"><script>x</script>@example.com', link: 'https://x.test/?a=1&b=2', logoUrl: '' });
+  assert.ok(!m.html.includes('<script>'));
+  assert.match(m.html, /a=1&amp;b=2/);
+  assert.ok(!m.html.includes('<img'), 'no logo address, no image');
+});
