@@ -6,7 +6,10 @@
  * whatever tile sat underneath. Alarms are not paused, and it says so, so
  * nobody mistakes a paused wall for a dead one.
  */
-export function PausedNotice({ onResume }) {
+export function PausedNotice({
+  onResume, minutes = 5,
+  note = 'Alarms, alerts and offline status are still up to date.',
+}) {
   return (
     <div
       className="paused-backdrop"
@@ -18,9 +21,8 @@ export function PausedNotice({ onResume }) {
       <div className="paused-card">
         <h2 id="paused-title">Live readings paused</h2>
         <p>
-          Nothing was touched on this page for 5 minutes, so the moving
-          readings were paused to save data. Alarms, alerts and offline
-          status are still up to date.
+          Nothing was touched on this page for {minutes} minutes, so the moving
+          readings were paused to save data. {note}
         </p>
         <p className="paused-cta">Click anywhere to continue.</p>
       </div>

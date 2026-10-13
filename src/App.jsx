@@ -12,6 +12,7 @@ import { useSeriesHistory } from './hooks/useSeriesHistory'
 import { useNow } from './hooks/useNow'
 import { useTheme } from './hooks/useTheme'
 import { useAlertCenter } from './hooks/useAlertCenter'
+import { useIdlePause } from './hooks/useIdlePause'
 import { systemState, stalenessThreshold, tagStalenessThreshold, isStaleLevel } from './lib/health'
 import { discoverTagKeys, buildTag, formatValue, displayUnit, limitState, FREQUENCY_TAG_KEY } from './lib/tags'
 import { colorForIndex, MAX_SERIES } from './lib/palette'
@@ -37,6 +38,7 @@ import { Billing } from './components/Billing'
 import { NamingPage } from './components/NamingPage'
 import { Masthead, formatInterval } from './components/Masthead'
 import { AlertToasts } from './components/AlertToasts'
+import { PausedNotice } from './components/PausedNotice'
 import { AlertHistory } from './components/AlertHistory'
 import { signOutUser } from './auth'
 
@@ -157,9 +159,27 @@ function Dashboard() {
 
   // Data reads wait for a resolved device; the rules would reject them
   // otherwise, and there is nothing to build a path from before then anyway.
-  const latest = useRtdbValue(deviceId ? `devices/${deviceId}/latest` : null, ready)
   const tags = useRtdbValue(deviceId ? `devices/${deviceId}/tags` : null, ready)
   const status = useRtdbValue(deviceId ? `devices/${deviceId}/status` : null, ready)
+
+  // AN UNATTENDED METER PAGE stops its moving readings after 15 minutes with
+  // no input (hooks/useIdlePause.js; ?kiosk=1 exempts a display meant to sit
+  // untouched). The mall wall has its own, shorter pause.
+  //
+  // Alarms come first, so the pause is hedged twice:
+  //  - Only for a meter whose BOX judges its own alarms. This page works out
+  //    an alarm from the live reading, so pausing that reading on any other
+  //    meter would silence its alarm here. Those meters never pause.
+  //  - Never while the box reports an alarm. The box's verdict rides on
+  //    status/, which keeps flowing; the moment it names a tag the readings
+  //    come back by themselves, and stay until the alarm is over.
+  const idle = useIdlePause(15 * 60000)
+  const boxJudged = Object.values(tags.data || {}).some((m) => m && m.boxAlerts === true)
+  const boxAlarm = Object.values(status.data?.alarms || {}).some((s) => Boolean(s) && s !== 'ok')
+  const streamPaused = idle.paused && onDevice && boxJudged && !boxAlarm
+  const streaming = ready && !streamPaused
+
+  const latest = useRtdbValue(deviceId ? `devices/${deviceId}/latest` : null, streaming)
   // Alert thresholds, so a card can draw where its alert zones are. Read
   // per device and deliberately NOT treated as required: an account without
   // read access here (or a device with nothing configured) simply gets tags
@@ -241,7 +261,9 @@ function Dashboard() {
     deviceId,
     tags: enrichedTags,
     connectionLevel: state.level,
-    enabled: ready,
+    // Not while paused: the readings are frozen then, and a frozen reading
+    // going stale is not an event.
+    enabled: streaming,
   })
 
   // Frequency is the VFD's own output, not a meter reading, and (per the
@@ -340,7 +362,7 @@ function Dashboard() {
   const historyTags = tableView ? tagList : visibleTags
   const history = useSeriesHistory(
     historyTags, range, deviceId,
-    ready && !devicePlan.loading && historyTags.length > 0,
+    streaming && !devicePlan.loading && historyTags.length > 0,
     premium,
   )
 
@@ -412,6 +434,14 @@ function Dashboard() {
         onOpenHistory={() => setShowAlertHistory(true)}
         nowMs={now}
       />
+
+      {streamPaused && (
+        <PausedNotice
+          onResume={idle.resume}
+          minutes={15}
+          note="If this meter goes into alarm, the readings start again by themselves."
+        />
+      )}
 
       {onDevice && (
         <AlertToasts toasts={alertCenter.toasts} onDismiss={alertCenter.dismissToast} />
