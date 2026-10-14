@@ -2975,3 +2975,66 @@ test('password reset: the email cannot be broken by what is typed into it', () =
   assert.match(m.html, /a=1&amp;b=2/);
   assert.ok(!m.html.includes('<img'), 'no logo address, no image');
 });
+
+// ---------------------------------------------------------------------------
+//  Box health (boxHealth.js)
+// ---------------------------------------------------------------------------
+
+const BOXH = require('./boxHealth');
+
+test('box health: a meter belongs to the box its id names', () => {
+  assert.equal(BOXH.boxOf('ayala-box1-9'), 'ayala-box1');
+  assert.equal(BOXH.boxOf('ayala-box2-32'), 'ayala-box2');
+  assert.equal(BOXH.boxOf('UMPD-MCWD'), 'UMPD-MCWD');
+  assert.equal(BOXH.boxOf('RHW01'), 'RHW01');
+  assert.equal(BOXH.paceTag({ Voltage: {}, Current: {} }), 'Current');
+  assert.equal(BOXH.paceTag({ pH: {}, Flow: {}, Total: { intervalMs: 600000 } }), 'Flow');
+  assert.equal(BOXH.paceTag({}), null);
+});
+
+test('box health: a clean hour, a lost minute, a late 10-minute row and a silent meter', () => {
+  const MIN = 60000;
+  const now = Date.UTC(2026, 9, 15, 0, 5, 30);
+  const end = Math.floor(now / MIN) * MIN - 2 * MIN;
+  const start = end - 59 * MIN;
+  const hour = (skip = () => false) => {
+    const rows = [];
+    for (let t = start; t <= end; t += MIN) if (!skip(t)) rows.push({ t, n: 15 });
+    return rows;
+  };
+  const clean = BOXH.summarizeBox({
+    now,
+    meters: [
+      { id: 'b-1', lastSeen: now - 5000, rows: hour(), dailyTs: now - 3 * 3600e3, kwhTs: now - 200e3 },
+      { id: 'b-2', lastSeen: now - 9000, rows: [] },
+    ],
+  });
+  assert.equal(clean.perMinute, 15);
+  assert.equal(clean.reading, 1);
+  assert.deepEqual(clean.silent, ['b-2']);
+  assert.equal(clean.missingMinutes, 0);
+  assert.equal(clean.lateMinutes, 0);
+  assert.equal(clean.fullPct, 100);
+  assert.equal(clean.heartbeatAgeS, 5);
+  assert.equal(BOXH.verdict(clean, now), 'good');
+
+  // One minute never arrived; ten more arrived together as one held row.
+  const lostAt = start + 5 * MIN;
+  const heldFrom = start + 20 * MIN;
+  const rows = hour((t) => t === lostAt || (t >= heldFrom && t < heldFrom + 10 * MIN));
+  rows.push({ t: heldFrom, n: 150 });
+  const bumpy = BOXH.summarizeBox({ now, meters: [{ id: 'b-1', lastSeen: now - 5000, rows }] });
+  assert.equal(bumpy.missingMinutes, 1);
+  assert.equal(bumpy.lateMinutes, 10);
+  assert.equal(BOXH.verdict(bumpy, now), 'watch');
+});
+
+test('box health: a box that stopped, or missed its 22:00 reading, is a problem', () => {
+  const now = Date.UTC(2026, 9, 15, 0, 5, 30);
+  const base = { reading: 3, missingMinutes: 0, lateMinutes: 0, fullPct: 100, lastDaily: now - 3600e3 };
+  assert.equal(BOXH.verdict({ ...base, heartbeatAgeS: 10 }, now), 'good');
+  assert.equal(BOXH.verdict({ ...base, heartbeatAgeS: 600 }, now), 'problem');
+  assert.equal(BOXH.verdict({ ...base, heartbeatAgeS: 10, lastDaily: now - 27 * 3600e3 }, now), 'problem');
+  assert.equal(BOXH.verdict({ ...base, heartbeatAgeS: 10, reading: 0 }, now), 'problem');
+  assert.equal(BOXH.verdict(null, now), 'problem');
+});

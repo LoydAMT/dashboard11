@@ -397,6 +397,15 @@
       }
     },
 
+    // Each box's hourly health, for the admin /performance page
+    // (components/PerformancePage.jsx). Written only by archiveSweep with the
+    // Admin SDK; read by admins and nobody else - it names every client's
+    // meters side by side.
+    "boxHealth": {
+      ".read": "auth != null && auth.token.firebase.sign_in_provider !== 'anonymous' && root.child('admins/'+auth.uid).val() === true",
+      ".write": false
+    },
+
     "mallDisplay": {
       ".read": "auth != null && auth.token.firebase.sign_in_provider !== 'anonymous'",
       "$deviceId": {

@@ -36,6 +36,7 @@ import { MallOverview, MallEntry } from './components/MallOverview'
 import { MallAlertHistory } from './components/MallAlertHistory'
 import { Billing } from './components/Billing'
 import { NamingPage } from './components/NamingPage'
+import { PerformancePage } from './components/PerformancePage'
 import { Masthead, formatInterval } from './components/Masthead'
 import { AlertToasts } from './components/AlertToasts'
 import { PausedNotice } from './components/PausedNotice'
@@ -67,6 +68,9 @@ export default function App() {
   // place "/naming" needs to be recognised at all.
   if (window.location.pathname === '/naming') {
     return <NamingPage />
+  }
+  if (window.location.pathname === '/performance') {
+    return <PerformancePage />
   }
   return <Dashboard />
 }

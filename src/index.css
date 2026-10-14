@@ -999,6 +999,31 @@ body {
   .alarm-save .signout-btn { flex: 1 1 0; }
 }
 
+/* /performance (components/PerformancePage.jsx). */
+.perf-page { max-width: 1000px; }
+.perf-list { display: flex; flex-direction: column; gap: 10px; margin-top: 12px; }
+.perf-box { border: 1px solid var(--border); border-left: 3px solid var(--border-strong); border-radius: 10px; background: var(--surface); padding: 12px 14px; }
+.perf-box.is-good { border-left-color: var(--live, #2f9e44); }
+.perf-box.is-watch { border-left-color: var(--stale, #e8a33d); }
+.perf-box.is-problem { border-left-color: var(--down, #e5484d); }
+.perf-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 10px; }
+.perf-name { font-weight: 640; font-size: 1rem; }
+.perf-id { font-size: .76rem; color: var(--text-faint); }
+.perf-chip { margin-left: auto; font-size: .72rem; font-weight: 650; padding: 1px 8px; border-radius: 999px; background: var(--surface-2); }
+.perf-chip.is-good { color: var(--live, #2f9e44); }
+.perf-chip.is-watch { color: var(--stale, #b7791f); }
+.perf-chip.is-problem { color: var(--down, #e5484d); }
+.perf-stats { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px 14px; margin: 10px 0 8px; }
+.perf-stat dt { font-size: .72rem; color: var(--text-faint); }
+.perf-stat dd { margin: 0; font-weight: 620; font-variant-numeric: tabular-nums; }
+.perf-silent { font-size: .82rem; color: var(--text-dim); margin: 0 0 8px; overflow-wrap: anywhere; }
+.perf-strip { display: flex; gap: 2px; align-items: flex-end; }
+.perf-cell { flex: 1 1 0; height: 16px; min-width: 3px; border-radius: 2px; background: var(--surface-2); }
+.perf-cell.is-good { background: color-mix(in srgb, var(--live, #2f9e44) 70%, transparent); }
+.perf-cell.is-watch { background: color-mix(in srgb, var(--stale, #e8a33d) 80%, transparent); }
+.perf-cell.is-problem { background: color-mix(in srgb, var(--down, #e5484d) 80%, transparent); }
+.perf-strip-label { display: flex; justify-content: space-between; font-size: .7rem; color: var(--text-faint); margin-top: 2px; }
+
 /* Malls: create one, pick its meters (components/CompanyManager.jsx). */
 .company-new { margin: 10px 0 4px; }
 .company-edit {

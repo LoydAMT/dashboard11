@@ -85,6 +85,7 @@ const { createBillingApi, createBillingSend } = require('./billingHandlers');
 const { PREMIUM } = require('./plans');
 const { notifyTargetFor, shouldNotify, telegramText, sendTelegram } = require('./telegram');
 const { createPasswordReset, checkLimit: checkResetLimit } = require('./passwordReset');
+const BH = require('./boxHealth');
 
 if (getApps().length === 0) {
   initializeApp();
@@ -354,8 +355,88 @@ exports.archiveSweep = onSchedule(
     for (const r of results) {
       console.log(`archiveSweep: ${JSON.stringify(r)}`);
     }
+
+    // The admin /performance page's numbers. Here because this already runs
+    // once an hour - a scheduled job of its own would be the project's
+    // fourth, and only three are free. Never allowed to fail the archive.
+    try {
+      await recordBoxHealth(sweepDevices);
+    } catch (err) {
+      console.error('archiveSweep: box health not recorded', err);
+    }
   }
 );
+
+/**
+ * Each box's last hour, into boxHealth/ (functions/boxHealth.js).
+ *
+ * About 5 KB read per meter: its pace tag's last hour of minute rows, its
+ * heartbeat, its newest meter reading and the newest 22:00 one.
+ */
+async function recordBoxHealth(devices) {
+  const rtdb = getDatabase();
+  const now = Date.now();
+  const companies = (await rtdb.ref('companies').once('value')).val() || {};
+  const owners = companiesByDevice(companies);
+
+  const meters = [];
+  await inParallel(devices, SWEEP_CONCURRENCY, async (id) => {
+    try {
+      const tags = (await rtdb.ref(`devices/${id}/tags`).once('value')).val() || {};
+      const tag = BH.paceTag(tags);
+      const [rowsSnap, seenSnap, kwhSnap, dailySnap] = await Promise.all([
+        tag
+          ? rtdb.ref(`devices/${id}/history/${tag}`).orderByKey()
+            .startAt(String(now - 75 * 60000)).endAt('9999999999999').once('value')
+          : null,
+        rtdb.ref(`devices/${id}/status/lastSeen`).once('value'),
+        tags.kWh ? rtdb.ref(`devices/${id}/latest/kWh/ts`).once('value') : null,
+        tags.kWh ? rtdb.ref(`devices/${id}/history/kWh/raw`).orderByKey().limitToLast(1).once('value') : null,
+      ]);
+      const rows = Object.entries((rowsSnap && rowsSnap.val()) || {})
+        .map(([k, v]) => ({ t: Number(k), n: v && v.n }))
+        .filter((r) => Number.isFinite(r.t));
+      const daily = Object.keys((dailySnap && dailySnap.val()) || {}).map(Number).filter(Number.isFinite);
+      meters.push({
+        id,
+        lastSeen: seenSnap.val(),
+        rows,
+        kwhTs: kwhSnap ? kwhSnap.val() : null,
+        dailyTs: daily.length ? Math.max(...daily) : null,
+      });
+    } catch (err) {
+      console.error(`boxHealth: ${id} unreadable`, err);
+    }
+  });
+
+  const boxes = {};
+  for (const m of meters) (boxes[BH.boxOf(m.id)] = boxes[BH.boxOf(m.id)] || []).push(m);
+
+  const hour = Math.floor(now / 3600e3) * 3600e3;
+  const updates = {};
+  for (const [box, list] of Object.entries(boxes)) {
+    const s = BH.summarizeBox({ meters: list, now });
+    // Named after the mall its meters are in, when they share one.
+    const mall = (owners[list[0].id] || []).find((c) => companies[c] && companies[c].name);
+    s.name = mall ? companies[mall].name : box;
+    s.status = BH.verdict(s, now);
+    updates[`boxHealth/current/${box}`] = s;
+    updates[`boxHealth/hours/${box}/${hour}`] = {
+      status: s.status, missing: s.missingMinutes, late: s.lateMinutes, reading: s.reading,
+    };
+  }
+  await rtdb.ref().update(updates);
+
+  // Older hours, so the node stays a couple of days long.
+  const cutoff = String(hour - BH.KEEP_HOURS * 3600e3);
+  await Promise.all(Object.keys(boxes).map(async (box) => {
+    const old = await rtdb.ref(`boxHealth/hours/${box}`).orderByKey().endAt(cutoff).once('value');
+    const drop = {};
+    for (const k of Object.keys(old.val() || {})) drop[k] = null;
+    if (Object.keys(drop).length) await rtdb.ref(`boxHealth/hours/${box}`).update(drop);
+  }));
+  console.log(`boxHealth: ${Object.keys(boxes).length} box(es), ${meters.length} meter(s)`);
+}
 
 // Keeps the flat access nodes in step with companies/.
 //
