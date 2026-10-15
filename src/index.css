@@ -3639,3 +3639,20 @@ body {
   .masthead-right > .masthead-link { flex: 1 1 0; min-height: 34px; justify-content: center; text-align: center; }
   .masthead-right > .device { flex-basis: 100%; }
 }
+
+/* The chosen span of days on a mall's table (components/MallHistory.jsx). */
+.custom-range { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 8px 12px; margin: 0 0 10px; }
+.custom-range-field { display: flex; flex-direction: column; gap: 2px; font-size: .72rem; color: var(--text-faint); }
+.custom-range-field input {
+  font: inherit; font-size: .86rem; color: var(--text);
+  padding: 5px 8px; min-height: 34px; box-sizing: border-box;
+  border: 1px solid var(--border-strong); border-radius: 7px; background: var(--surface);
+  color-scheme: light dark;
+}
+.custom-range-field input:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.custom-range-hint { flex: 1 1 220px; font-size: .74rem; color: var(--text-faint); padding-bottom: 6px; }
+@media (max-width: 560px) {
+  .custom-range-field { flex: 1 1 0; }
+  .custom-range-field input { width: 100%; min-height: 40px; font-size: 1rem; }
+  .custom-range-hint { flex-basis: 100%; padding-bottom: 0; }
+}

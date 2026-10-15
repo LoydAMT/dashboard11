@@ -29,7 +29,9 @@ export function useKwhHistory(deviceId, range, enabled) {
     // Captured once per (device, range) rather than recomputed by the
     // caller on every render, so "the cutoff this query actually used" and
     // "the cutoff buildKwhRows filters by" can never drift apart.
-    const since = range.ms != null ? Date.now() - range.ms : null
+    const since = range.from ?? (range.ms != null ? Date.now() - range.ms : null)
+    // A chosen date span (lib/ranges.js: customRange) also has an end.
+    const upper = range.to ?? null
 
     let context = null
     let main = {}
@@ -45,6 +47,7 @@ export function useKwhHistory(deviceId, range, enabled) {
         // a key older than this window - it asks for the newest couple of
         // keys in the whole node, not just the ones after `since`.
         if (since != null && t < since) continue
+        if (upper != null && t > upper) continue
         readings.push({ t, value: v })
       }
       readings.sort((a, b) => a.t - b.t)
@@ -67,9 +70,11 @@ export function useKwhHistory(deviceId, range, enabled) {
     // below for whatever gets pushed while this is open, is the same
     // backfill-then-follow shape useSeriesHistory already uses for every
     // other tag.
-    const backfillQuery = since != null
-      ? query(ref(db, path), orderByKey(), startAt(String(since)))
-      : query(ref(db, path), orderByKey())
+    const backfillQuery = since != null && upper != null
+      ? query(ref(db, path), orderByKey(), startAt(String(since)), endAt(String(upper)))
+      : since != null
+        ? query(ref(db, path), orderByKey(), startAt(String(since)))
+        : query(ref(db, path), orderByKey())
 
     get(backfillQuery)
       .then((snap) => {
@@ -82,11 +87,14 @@ export function useKwhHistory(deviceId, range, enabled) {
     // Live tail: the newest one or two keys in the node, however wide the
     // window is. A reading pushed while this is open still lands without a
     // reselect, at the cost of two keys instead of the whole history.
+    // Not for a span that closed in the past: nothing new can land in it.
     const tailQuery = query(ref(db, path), orderByKey(), limitToLast(2))
-    const unsubscribe = onValue(tailQuery, (snap) => {
-      main = { ...main, ...(snap.val() || {}) }
-      emit()
-    }, fail)
+    const unsubscribe = upper != null && upper < Date.now() - 120000
+      ? () => {}
+      : onValue(tailQuery, (snap) => {
+        main = { ...main, ...(snap.val() || {}) }
+        emit()
+      }, fail)
 
     if (since != null) {
       // The one reading immediately before the window - a plain get(), not

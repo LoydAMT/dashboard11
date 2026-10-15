@@ -3,7 +3,7 @@ import { useRtdbValue } from '../hooks/useRtdbValue'
 import { useSeriesHistory } from '../hooks/useSeriesHistory'
 import { useKwhHistory } from '../hooks/useKwhHistory'
 import { useNow } from '../hooks/useNow'
-import { RANGES, DEFAULT_RANGE } from '../lib/ranges'
+import { RANGES, DEFAULT_RANGE, customRange, dayString } from '../lib/ranges'
 import { KWH_RANGES, DEFAULT_KWH_RANGE } from '../lib/kwh'
 import { offered } from '../lib/plans'
 import { buildTag } from '../lib/tags'
@@ -69,10 +69,28 @@ export const MallHistory = memo(function MallHistory({ companyId, tenants, premi
   const ranges = useMemo(() => offered(energy ? KWH_RANGES : RANGES, premium), [energy, premium])
   const wantedRangeId = energy ? kwhRangeId : rangeId
   // Derived, so a plan that changes mid-session falls back by itself.
-  const range = useMemo(
+  const presetRange = useMemo(
     () => ranges.find((r) => r.id === wantedRangeId) || (energy ? DEFAULT_KWH_RANGE : DEFAULT_RANGE),
     [ranges, wantedRangeId, energy],
   )
+
+  // A chosen span of days for the daily kWh table and its export - the
+  // billing figures - and nothing else. Held as the two days typed in, then
+  // fitted to what the plan holds (customLimits) every render, so a plan
+  // change corrects it by itself.
+  const [custom, setCustom] = useState(null)   // { from, to } as 'YYYY-MM-DD' | null
+  const dayNow = useNow(60_000)
+  const today = dayString(dayNow)
+  const limits = customLimits({ premium, today })
+  const customDays = energy && view === 'table' && custom ? clampDays(custom, limits, today) : null
+  const customFrom = customDays?.from
+  const customTo = customDays?.to
+  const customWindow = useMemo(
+    () => (customFrom ? customRange(customFrom, customTo) : null),
+    [customFrom, customTo],
+  )
+  const range = customWindow || presetRange
+  const startCustom = () => setCustom({ from: addDays(today, -6), to: today })
 
   // Only the meters that report this reading at all.
   const carrying = useMemo(
@@ -172,7 +190,8 @@ export const MallHistory = memo(function MallHistory({ companyId, tenants, premi
       // No live value: see withoutNow.
       tags: wanted.map((m) => ({ ...m, value: null })),
       range,
-      nowMs: coarseNow,
+      // A chosen span is measured back from its own end, not from now.
+      nowMs: range.to ?? coarseNow,
     }))
   }, [energy, tableView, feed, wanted, byKey, range, coarseNow])
 
@@ -270,14 +289,52 @@ export const MallHistory = memo(function MallHistory({ companyId, tenants, premi
                 type="button"
                 className={`range-btn ${r.id === range.id ? 'range-active' : ''}`}
                 aria-pressed={r.id === range.id}
-                onClick={() => (energy ? setKwhRangeId(r.id) : setRangeId(r.id))}
+                onClick={() => { setCustom(null); if (energy) setKwhRangeId(r.id); else setRangeId(r.id) }}
               >
                 {r.label}
               </button>
             ))}
+            {/* Pick the days to show and export. The table only: the chart
+                already has zoom for looking closer. */}
+            {tableView && energy && (
+              <button
+                type="button"
+                className={`range-btn ${customWindow ? 'range-active' : ''}`}
+                aria-pressed={Boolean(customWindow)}
+                onClick={() => (customWindow ? null : startCustom())}
+              >
+                Dates
+              </button>
+            )}
           </div>
         </div>
       </div>
+
+      {customDays && (
+        <div className="custom-range" role="group" aria-label="Date range">
+          <label className="custom-range-field">
+            <span>From</span>
+            <input
+              type="date"
+              value={customDays.from}
+              min={limits.earliest || undefined}
+              max={customDays.to}
+              onChange={(e) => e.target.value && setCustom({ from: e.target.value, to: customDays.to })}
+            />
+          </label>
+          <label className="custom-range-field">
+            <span>To</span>
+            <input
+              type="date"
+              value={customDays.to}
+              min={customDays.from}
+              max={today}
+              onChange={(e) => e.target.value && setCustom({ from: customDays.from, to: e.target.value })}
+            />
+          </label>
+          <span className="custom-range-hint">{limits.hint}</span>
+        </div>
+      )}
 
       {tableView ? (
         <DataTable
@@ -371,3 +428,35 @@ const KwhFeed = memo(function KwhFeed({ slot, deviceId, range, onData }) {
 
   return null
 })
+
+/**
+ * How far back a chosen span of daily readings may reach on this plan - the
+ * same depth the plan's own kWh range buttons reach (lib/plans.js), so
+ * picking dates never shows more than the plan includes. Every daily reading
+ * is kept; Standard sees the last seven days of them.
+ */
+function customLimits({ premium, today }) {
+  return premium
+    ? { earliest: null, maxDays: null, hint: 'Daily meter readings for any dates.' }
+    : {
+        earliest: addDays(today, -6),
+        maxDays: 7,
+        hint: 'Standard covers the last 7 days of daily readings. Older ones are part of Premium.',
+      }
+}
+
+/** The two days fitted inside the limits: in order, not past today, not too early or too long. */
+function clampDays({ from, to }, { earliest, maxDays }, today) {
+  let a = from
+  let b = to > today ? today : to
+  if (a > b) [a, b] = [b, a]
+  if (earliest && a < earliest) a = earliest
+  if (b < a) b = a
+  if (maxDays && addDays(a, maxDays - 1) < b) a = addDays(b, -(maxDays - 1))
+  return { from: a, to: b }
+}
+
+/** "2026-10-15" moved by n days. Noon, so a clock change can never skip a day. */
+function addDays(day, n) {
+  return dayString(new Date(`${day}T12:00:00`).getTime() + n * DAY)
+}

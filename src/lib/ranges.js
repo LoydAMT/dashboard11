@@ -51,3 +51,37 @@ export function expectedStep(range, rowCount) {
   const buckets = Math.min(rowCount || 1, range.points)
   return Math.max(MINUTE, Math.round(range.ms / Math.max(buckets, 1)))
 }
+
+/**
+ * A window between two calendar days, both included, in the viewer's own
+ * time zone - "2026-10-01" to "2026-10-15" - for an export of a chosen span.
+ *
+ * Not one of RANGES: it has fixed ends rather than a length back from now.
+ * `from` and `to` are what tell the history hooks so (useSeriesHistory,
+ * useKwhHistory); `ms` is kept for everything that only needs a length. The
+ * id carries the dates, so each choice is cached apart from the others. A
+ * window ending today stops at `now`.
+ */
+export function customRange(fromDay, toDay, now = Date.now()) {
+  const from = dayStart(fromDay)
+  const to = Math.min(dayStart(toDay) + DAY - 1, now)
+  if (!Number.isFinite(from) || !Number.isFinite(to) || to <= from) return null
+  return {
+    id: `custom:${fromDay}:${toDay}`,
+    label: fromDay === toDay ? fromDay : `${fromDay} to ${toDay}`,
+    ms: to - from,
+    from,
+    to,
+    points: 720,
+    custom: true,
+  }
+}
+
+const dayStart = (day) => new Date(`${day}T00:00:00`).getTime()
+
+/** A moment as its local calendar day, "2026-10-15" - what a date input holds. */
+export function dayString(ms) {
+  const d = new Date(ms)
+  const p = (n) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`
+}
