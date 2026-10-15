@@ -1,7 +1,7 @@
-import { useMemo } from 'react'
+import { useMemo, useState } from 'react'
 import {
   ComposedChart, Area, Line, XAxis, YAxis, CartesianGrid,
-  Tooltip, ReferenceLine, ResponsiveContainer, LabelList,
+  Tooltip, ReferenceLine, ReferenceArea, ResponsiveContainer, LabelList,
 } from 'recharts'
 import { formatAxisTime, formatLocal } from '../lib/time'
 import { formatValue, displayUnit } from '../lib/tags'
@@ -55,6 +55,14 @@ export function HistoryChart({
   }, [data, tags, single])
   const hasAnomalies = Object.values(anomalies).some((m) => m.size > 0)
 
+  // ZOOM. A window inside whatever range is loaded, so zooming never reads
+  // anything new - it only narrows what is drawn. Kept as times rather than
+  // row positions, so rows arriving or being dropped do not shift it; and a
+  // window whose right edge is the newest point keeps following new data.
+  // Tied to the range it was made in: choosing another range starts wide.
+  const [zoom, setZoom] = useState(null)      // { from, to, follow, rangeMs } | null
+  const [drag, setDrag] = useState(null)      // { a, b } while dragging across the plot
+
   if (error) {
     return (
       <div className="chart-wrap">
@@ -94,22 +102,77 @@ export function HistoryChart({
     )
   }
 
+  const t0 = data[0].t
+  const t1 = data[data.length - 1].t
+  const view = zoomedRows(data, zoom && zoom.rangeMs === rangeMs ? zoom : null, t0, t1)
+  const zoomed = view !== data
+  const vFrom = view[0].t
+  const vTo = view[view.length - 1].t
+  const vSpan = vTo - vFrom
+  const fullSpan = t1 - t0
+  // The shortest window worth drawing: a handful of points.
+  const minSpan = Math.max((fullSpan / Math.max(1, data.length - 1)) * 4, 60000)
+
+  const setWindow = (from, to) => {
+    const span = Math.max(to - from, minSpan)
+    let a = Math.max(t0, Math.min(from, t1 - span))
+    const b = Math.min(t1, a + span)
+    a = Math.max(t0, b - span)
+    if (a <= t0 && b >= t1) { setZoom(null); return }
+    setZoom({ from: a, to: b, follow: b >= t1, rangeMs })
+  }
+  const centre = (vFrom + vTo) / 2
+  const zoomIn = () => setWindow(centre - vSpan / 4, centre + vSpan / 4)
+  const zoomOut = () => setWindow(centre - vSpan, centre + vSpan)
+  const pan = (dir) => setWindow(vFrom + (dir * vSpan) / 2, vTo + (dir * vSpan) / 2)
+
+  // Drag across the plot to zoom to that stretch (mouse; on a phone the
+  // buttons do it, since a drag there is the page scrolling).
+  const onDown = (e) => { if (e && e.activeLabel != null) setDrag({ a: e.activeLabel, b: e.activeLabel }) }
+  const onMove = (e) => { if (drag && e && e.activeLabel != null) setDrag({ ...drag, b: e.activeLabel }) }
+  const onUp = () => {
+    if (drag && drag.a !== drag.b) setWindow(Math.min(drag.a, drag.b), Math.max(drag.a, drag.b))
+    setDrag(null)
+  }
+
   // Where each line ends, so the direct label lands on the last real point
   // rather than trailing off into a gap.
   const lastIndex = {}
-  data.forEach((row, i) => {
+  view.forEach((row, i) => {
     for (const tag of tags) if (row[tag.key] != null) lastIndex[tag.key] = i
   })
 
-  const domain = computeDomain(data, tags, { isBool, indexed })
+  // The value axis fits what is on screen, so zooming into a quiet stretch
+  // shows its detail instead of a flat line at the bottom of the old scale.
+  const domain = computeDomain(view, tags, { isBool, indexed })
   const formatTick = axisTickFormatter(domain)
   const valueTicks = axisTicks(domain)
 
   return (
-    <div className="chart-wrap">
+    <>
+    <div className="chart-zoom" role="group" aria-label="Zoom">
+      <button type="button" className="chart-zoom-btn" onClick={zoomOut} disabled={!zoomed} title="Zoom out" aria-label="Zoom out">−</button>
+      <button type="button" className="chart-zoom-btn" onClick={zoomIn} disabled={vSpan <= minSpan * 1.01} title="Zoom in" aria-label="Zoom in">+</button>
+      <button type="button" className="chart-zoom-btn" onClick={() => pan(-1)} disabled={!zoomed || vFrom <= t0} title="Earlier" aria-label="Earlier">‹</button>
+      <button type="button" className="chart-zoom-btn" onClick={() => pan(1)} disabled={!zoomed || vTo >= t1} title="Later" aria-label="Later">›</button>
+      <span className="chart-zoom-label">
+        {zoomed
+          ? `${formatAxisTime(vFrom, vSpan)} – ${formatAxisTime(vTo, vSpan)}`
+          : 'Use + or drag across the chart to zoom in'}
+      </span>
+      {zoomed && <button type="button" className="chart-zoom-reset" onClick={() => setZoom(null)}>Show all</button>}
+    </div>
+    <div className={`chart-wrap${drag ? ' is-dragging' : ''}`}>
       <ResponsiveContainer width="100%" height="100%">
         {/* Right margin leaves room for the direct labels. */}
-        <ComposedChart data={data} margin={{ top: 8, right: 68, bottom: 4, left: 0 }}>
+        <ComposedChart
+          data={view}
+          margin={{ top: 8, right: 68, bottom: 4, left: 0 }}
+          onMouseDown={onDown}
+          onMouseMove={onMove}
+          onMouseUp={onUp}
+          onMouseLeave={() => setDrag(null)}
+        >
           <CartesianGrid stroke="var(--grid)" vertical={false} />
 
           <XAxis
@@ -117,7 +180,7 @@ export function HistoryChart({
             type="number"
             scale="time"
             domain={['dataMin', 'dataMax']}
-            tickFormatter={(t) => formatAxisTime(t, rangeMs)}
+            tickFormatter={(t) => formatAxisTime(t, zoomed ? vSpan : rangeMs)}
             tick={{ fontSize: 11, fill: 'var(--text-faint)' }}
             stroke="var(--border)"
             minTickGap={44}
@@ -162,6 +225,10 @@ export function HistoryChart({
               label={{ value: `lo ${single.loLimit}`, position: 'insideBottomRight',
                        fontSize: 10, fill: 'var(--alarm-lo)' }}
             />
+          )}
+
+          {drag && drag.a !== drag.b && (
+            <ReferenceArea x1={drag.a} x2={drag.b} fill="var(--accent)" fillOpacity={0.12} stroke="var(--accent)" strokeOpacity={0.4} />
           )}
 
           {single && !isBool && !indexed && (
@@ -219,7 +286,23 @@ export function HistoryChart({
         </div>
       )}
     </div>
+    </>
   )
+}
+
+/**
+ * The rows inside a zoom window, or `data` itself when not zoomed (so the
+ * caller can tell by identity). A window that follows the newest point
+ * slides with it; one that no longer holds two points falls back to all.
+ */
+function zoomedRows(data, zoom, t0, t1) {
+  if (!zoom) return data
+  const span = zoom.to - zoom.from
+  const to = zoom.follow ? t1 : Math.min(zoom.to, t1)
+  const from = Math.max(t0, to - span)
+  if (from <= t0 && to >= t1) return data
+  const rows = data.filter((r) => r.t >= from && r.t <= to)
+  return rows.length >= 2 ? rows : data
 }
 
 /**

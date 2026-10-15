@@ -753,6 +753,29 @@ body {
 }
 
 .chart-wrap { width: 100%; height: 300px; }
+.chart-wrap.is-dragging { cursor: col-resize; user-select: none; }
+
+/* Zoom, above every history chart (components/HistoryChart.jsx). */
+.chart-zoom { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 6px; margin: 2px 0 6px; }
+.chart-zoom-btn {
+  font: inherit; font-size: 1rem; font-weight: 600; line-height: 1;
+  width: 32px; height: 30px; display: inline-grid; place-items: center;
+  border: 1px solid var(--border); border-radius: 7px;
+  background: var(--surface); color: var(--text); cursor: pointer;
+}
+.chart-zoom-btn:hover:not(:disabled) { border-color: var(--border-strong); }
+.chart-zoom-btn:disabled { opacity: .4; cursor: default; }
+.chart-zoom-btn:focus-visible, .chart-zoom-reset:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.chart-zoom-label { font-size: .76rem; color: var(--text-faint); font-variant-numeric: tabular-nums; margin-left: 4px; min-width: 0; }
+.chart-zoom-reset {
+  font: inherit; font-size: .76rem; font-weight: 600; margin-left: auto;
+  padding: 4px 10px; border-radius: 999px; border: 1px solid var(--accent);
+  background: none; color: var(--accent); cursor: pointer;
+}
+@media (max-width: 560px) {
+  .chart-zoom-btn { width: 38px; height: 36px; }
+  .chart-zoom-label { flex-basis: 100%; margin-left: 0; order: 9; }
+}
 
 @media (max-width: 560px) {
   .chart-wrap { height: 240px; }
