@@ -71,6 +71,7 @@ export function PerformancePage() {
           The last hour for every box, worked out on the server once an hour (a few minutes past).
           {newest > 0 && ` Last updated ${formatAgo(now - newest)}.`}
         </p>
+        <Legend />
       </div>
 
       {health.error && (
@@ -82,16 +83,90 @@ export function PerformancePage() {
       )}
 
       <div className="perf-list">
-        {boxes.map(([id, s]) => <BoxCard key={id} id={id} s={s} hours={hours[id] || {}} />)}
+        {boxes.map(([id, s]) => <BoxCard key={id} id={id} s={s} hours={hours[id] || {}} now={now} />)}
       </div>
     </div>
   )
 }
 
 const RANK = { problem: 0, watch: 1, good: 2 }
+
+/** What each label means, once, above the boxes. */
+function Legend() {
+  return (
+    <details className="perf-legend">
+      <summary>What Good, Watch and Problem mean</summary>
+      <dl>
+        <dt><span className="perf-chip is-good">Good</span></dt>
+        <dd>Connected, and every minute of the last hour arrived on time with its usual number of readings.</dd>
+        <dt><span className="perf-chip is-watch">Watch</span></dt>
+        <dd>
+          Working, but not cleanly: 5 or more of the last 60 minutes did not arrive on time, or under 90% of
+          minutes held their usual number of readings. Nothing is lost - a box that cannot upload keeps the
+          readings and sends them later as 10-minute rows - but the charts are coarser there. Usually the
+          site&apos;s internet dropping out for a moment.
+        </dd>
+        <dt><span className="perf-chip is-problem">Problem</span></dt>
+        <dd>
+          Needs someone to look now: the box has not been heard from for over 3 minutes, no meter on it is
+          sending readings, or the 10 PM meter reading - the one bills are made from - has not arrived in
+          the last 26 hours.
+        </dd>
+      </dl>
+      <p>
+        Meters that are not answering are listed on each box but do not change its label: a meter switched
+        off at the site is not a fault in the box.
+      </p>
+    </details>
+  )
+}
+
+/**
+ * Why a box has the label it has, in words - worked out from the same
+ * figures and the same limits the server used (functions/boxHealth.js:
+ * verdict), so the explanation and the label cannot disagree.
+ */
+function reasons(s, now) {
+  const out = []
+  const lost = (s.missingMinutes || 0) + (s.lateMinutes || 0)
+  const dailyLate = s.lastDaily != null && now - s.lastDaily > 26 * 3600e3
+
+  if (s.heartbeatAgeS == null) out.push('This box has never reported in.')
+  else if (s.heartbeatAgeS > 180) out.push(`Not heard from for ${ageText(s.heartbeatAgeS)} - it may be off, or offline.`)
+  if (s.reading === 0) out.push('No meter on this box sent a reading in the last hour.')
+  if (dailyLate) out.push(`No 10 PM meter reading since ${dayTime(s.lastDaily)} - check before the next bill is made.`)
+  if (out.length) return out
+
+  if (lost >= 5) {
+    const parts = []
+    if (s.missingMinutes) parts.push(`${s.missingMinutes} did not arrive`)
+    if (s.lateMinutes) parts.push(`${s.lateMinutes} were sent late as 10-minute rows`)
+    out.push(
+      `${lost} of the last 60 minutes were not on time (${parts.join(', ')}). 5 or more is flagged. `
+      + 'The box kept those readings and sends them once it can; this usually means its internet connection dropped out briefly.',
+    )
+  }
+  if (s.fullPct != null && s.fullPct < 90) {
+    out.push(
+      `Only ${s.fullPct}% of minutes held the usual ${s.perMinute} readings, so the box is reading its meters `
+      + 'more slowly than normal - often a meter not answering, or a slow line.',
+    )
+  }
+  if (out.length) return out
+
+  if (s.missingMinutes == null) {
+    out.push('Connected and sending. This box only sends a reading when it changes, so quiet minutes are normal and are not counted.')
+  } else {
+    out.push(`Connected, and all 60 minutes of the last hour arrived on time with ${s.perMinute} readings each.`)
+  }
+  if (s.missingMinutes != null && lost > 0) {
+    out.push(`${lost} minute${lost === 1 ? ' was' : 's were'} not on time - under the 5 that would flag it.`)
+  }
+  return out
+}
 const LABEL = { good: 'Good', watch: 'Watch', problem: 'Problem' }
 
-function BoxCard({ id, s, hours }) {
+function BoxCard({ id, s, hours, now }) {
   const status = s.status || 'problem'
   const lost = (s.missingMinutes || 0) + (s.lateMinutes || 0)
   return (
@@ -102,6 +177,10 @@ function BoxCard({ id, s, hours }) {
         <span className={`perf-chip is-${status}`}>{LABEL[status] || status}</span>
       </div>
 
+      <ul className={`perf-why is-${status}`}>
+        {reasons(s, now).map((r) => <li key={r}>{r}</li>)}
+      </ul>
+
       <dl className="perf-stats">
         <Stat label="Last heard from" value={s.heartbeatAgeS == null ? 'never' : `${ageText(s.heartbeatAgeS)} ago`} />
         <Stat label="Meters reading" value={`${s.reading} of ${s.meters}`} />
@@ -111,7 +190,7 @@ function BoxCard({ id, s, hours }) {
           value={s.missingMinutes == null ? 'not tracked, sends on change'
             : lost === 0 ? 'none' : `${lost}${s.lateMinutes ? ` (${s.lateMinutes} sent late)` : ''}`}
         />
-        <Stat label="Meter total read" value={s.kwhAgeS == null ? '—' : `${ageText(s.kwhAgeS)} ago`} />
+        {s.kwhAgeS != null && <Stat label="Meter total read" value={`${ageText(s.kwhAgeS)} ago`} />}
         <Stat label="Last 10 PM reading" value={s.lastDaily ? dayTime(s.lastDaily) : '—'} />
       </dl>
 

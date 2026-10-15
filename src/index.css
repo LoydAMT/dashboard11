@@ -1016,6 +1016,15 @@ body {
 .perf-stats { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px 14px; margin: 10px 0 8px; }
 .perf-stat dt { font-size: .72rem; color: var(--text-faint); }
 .perf-stat dd { margin: 0; font-weight: 620; font-variant-numeric: tabular-nums; }
+.perf-why { margin: 8px 0 0; padding: 8px 10px 8px 26px; border-radius: 8px; background: var(--surface-2); font-size: .86rem; line-height: 1.45; color: var(--text); }
+.perf-why li + li { margin-top: 4px; }
+.perf-legend { margin-top: 8px; font-size: .86rem; color: var(--text-dim); }
+.perf-legend summary { cursor: pointer; color: var(--accent); font-weight: 560; }
+.perf-legend dl { display: grid; grid-template-columns: auto 1fr; gap: 8px 12px; margin: 10px 0 6px; align-items: start; }
+.perf-legend dt .perf-chip { margin-left: 0; }
+.perf-legend dd { margin: 0; line-height: 1.45; }
+.perf-legend p { margin: 0; }
+@media (max-width: 620px) { .perf-legend dl { grid-template-columns: 1fr; } }
 .perf-silent { font-size: .82rem; color: var(--text-dim); margin: 0 0 8px; overflow-wrap: anywhere; }
 .perf-strip { display: flex; gap: 2px; align-items: flex-end; }
 .perf-cell { flex: 1 1 0; height: 16px; min-width: 3px; border-radius: 2px; background: var(--surface-2); }
