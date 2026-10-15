@@ -3052,3 +3052,46 @@ test('box health: a box that sends a row only when a reading changes is not shor
   assert.equal(s.lateMinutes, null);
   assert.equal(BOXH.verdict(s, now), 'good');
 });
+
+// ---------------------------------------------------------------------------
+//  Recent minutes for dial ranges (recentMinutes.js)
+// ---------------------------------------------------------------------------
+
+const { createRecentMinutes } = require('./recentMinutes');
+
+test('recent minutes: the first run reads the whole window, later runs only from the newest held minute', () => {
+  const MIN = 60000;
+  const rm = createRecentMinutes();
+  const t0 = 1_800_000_000_000;
+  const since = t0 - 15 * MIN;
+  assert.equal(rm.startFor('m1', 'Current', since), since, 'nothing held: full window');
+
+  const first = {};
+  for (let i = 15; i >= 1; i -= 1) first[t0 - i * MIN] = { avg: i, min: i, max: i, n: 30 };
+  rm.absorb('m1', 'Current', first, since);
+  assert.equal(rm.startFor('m1', 'Current', since), t0 - MIN, 'resumes from the newest minute');
+  assert.equal(rm.startFor('m1', 'Voltage', since), since, 'each reading separately');
+  assert.equal(rm.startFor('m2', 'Current', since), since, 'each meter separately');
+
+  // Two minutes later: two new minutes, and the window has moved on by two.
+  const later = t0 + 2 * MIN;
+  const since2 = later - 15 * MIN;
+  rm.absorb('m1', 'Current', { [t0 - MIN]: first[t0 - MIN], [t0]: { avg: 99, min: 98, max: 100, n: 30 }, [t0 + MIN]: { avg: 1, n: 30 } }, since2);
+  const w = rm.windows('m1', ['Current', 'kWh'], since2);
+  assert.equal(w.length, 15, 'the same 15-minute window, built from pieces');
+  assert.equal(w[0].minute, since2);
+  assert.equal(w[w.length - 1].minute, t0 + MIN);
+  assert.equal(w.find((x) => x.minute === t0).byTag.Current.max, 100);
+  assert.ok(w.every((x) => x.byTag.kWh === undefined), 'a reading with no rollups adds nothing');
+});
+
+test('recent minutes: a box that went quiet longer than the window is read in full again', () => {
+  const MIN = 60000;
+  const rm = createRecentMinutes();
+  const t0 = 1_800_000_000_000;
+  rm.absorb('m1', 'Current', { [t0]: { avg: 1, n: 30 } }, t0 - 15 * MIN);
+  const since = t0 + 30 * MIN;
+  assert.equal(rm.startFor('m1', 'Current', since), since);
+  rm.absorb('m1', 'Current', {}, since);
+  assert.equal(rm.windows('m1', ['Current'], since).length, 0, 'old minutes forgotten');
+});

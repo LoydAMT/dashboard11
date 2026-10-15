@@ -86,6 +86,7 @@ const { PREMIUM } = require('./plans');
 const { notifyTargetFor, shouldNotify, telegramText, sendTelegram } = require('./telegram');
 const { createPasswordReset, checkLimit: checkResetLimit } = require('./passwordReset');
 const BH = require('./boxHealth');
+const { createRecentMinutes } = require('./recentMinutes');
 
 if (getApps().length === 0) {
   initializeApp();
@@ -895,6 +896,9 @@ exports.boxAlertEvent = onValueCreated(
 // have saved almost nothing for a real delay in an alarm.
 const SWEEP_TTL = { tags: 5 * 60000, naming: 10 * 60000 };
 const sweepCache = new Map();
+// The recent minutes behind each self-judging box's dial ranges, so a run
+// reads only the new ones (recentMinutes.js).
+const recentMinutes = createRecentMinutes();
 // device -> the alertState document as Firestore holds it (null = none yet).
 // Held until this sweep changes the document, then forgotten and re-read.
 const alertStateCache = new Map();
@@ -1047,23 +1051,38 @@ exports.alertSweep = onSchedule(
             .map(([k]) => k);
           const tagsToRead = [...new Set([...historyTags, ...Object.keys(rules)])];
 
-          const byMinute = new Map();
-          for (const tagKey of tagsToRead) {
-            const snap = await rtdb.ref(`devices/${device}/history/${tagKey}`)
-              .orderByKey().startAt(String(since)).endAt('9999999999999').once('value');
-            for (const [minute, r] of Object.entries(snap.val() || {})) {
-              const t = Number(minute);
-              if (!Number.isFinite(t) || !r || typeof r !== 'object') continue;
-              if (!byMinute.has(t)) byMinute.set(t, { minute: t, byTag: {} });
-              byMinute.get(t).byTag[tagKey] = r;
+          let minutes;
+          if (boxAlerts) {
+            // Here only for the mall page's dial ranges (the box judges its
+            // own alarms), so only the minutes not already held are read -
+            // see recentMinutes.js. The window is the same 15 minutes.
+            await Promise.all(tagsToRead.map(async (tagKey) => {
+              const from = recentMinutes.startFor(device, tagKey, since);
+              const snap = await rtdb.ref(`devices/${device}/history/${tagKey}`)
+                .orderByKey().startAt(String(from)).endAt('9999999999999').once('value');
+              recentMinutes.absorb(device, tagKey, snap.val(), since);
+            }));
+            minutes = recentMinutes.windows(device, tagsToRead, since);
+          } else {
+            const byMinute = new Map();
+            for (const tagKey of tagsToRead) {
+              const snap = await rtdb.ref(`devices/${device}/history/${tagKey}`)
+                .orderByKey().startAt(String(since)).endAt('9999999999999').once('value');
+              for (const [minute, r] of Object.entries(snap.val() || {})) {
+                const t = Number(minute);
+                if (!Number.isFinite(t) || !r || typeof r !== 'object') continue;
+                if (!byMinute.has(t)) byMinute.set(t, { minute: t, byTag: {} });
+                byMinute.get(t).byTag[tagKey] = r;
+              }
             }
+            minutes = [...byMinute.values()].sort((a, b) => a.minute - b.minute);
           }
           // A tag with no minute rollups and no alert summaries either would
           // otherwise be evaluated once per stored snapshot and miss
           // everything in between. Those tags get their live value as a
           // window on every sweep. See withLiveWindow in alertEngine.js.
           windows = withLiveWindow({
-            windows: [...byMinute.values()].sort((a, b) => a.minute - b.minute),
+            windows: minutes,
             latest: latestVal || {},
             tagKeys: tagsToRead,
             now,
