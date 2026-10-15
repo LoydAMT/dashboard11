@@ -108,7 +108,8 @@ function BoxCard({ id, s, hours }) {
         <Stat label="Readings per minute" value={s.perMinute ? `${s.perMinute}${s.fullPct != null ? ` · ${s.fullPct}% full` : ''}` : '—'} />
         <Stat
           label="Minutes not on time (of 60)"
-          value={lost === 0 ? 'none' : `${lost}${s.lateMinutes ? ` (${s.lateMinutes} sent late)` : ''}`}
+          value={s.missingMinutes == null ? 'not tracked, sends on change'
+            : lost === 0 ? 'none' : `${lost}${s.lateMinutes ? ` (${s.lateMinutes} sent late)` : ''}`}
         />
         <Stat label="Meter total read" value={s.kwhAgeS == null ? '—' : `${ageText(s.kwhAgeS)} ago`} />
         <Stat label="Last 10 PM reading" value={s.lastDaily ? dayTime(s.lastDaily) : '—'} />

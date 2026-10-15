@@ -416,9 +416,11 @@ async function recordBoxHealth(devices) {
   const updates = {};
   for (const [box, list] of Object.entries(boxes)) {
     const s = BH.summarizeBox({ meters: list, now });
-    // Named after the mall its meters are in, when they share one.
+    // A box of one meter is called what that meter is called (Power
+    // Monitoring); a box of many, after the mall its meters are in.
     const mall = (owners[list[0].id] || []).find((c) => companies[c] && companies[c].name);
-    s.name = mall ? companies[mall].name : box;
+    const own = list.length === 1 ? (await rtdb.ref(`naming/${list[0].id}`).once('value')).val() : null;
+    s.name = (typeof own === 'string' && own) || (mall ? companies[mall].name : box);
     s.status = BH.verdict(s, now);
     updates[`boxHealth/current/${box}`] = s;
     updates[`boxHealth/hours/${box}/${hour}`] = {

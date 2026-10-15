@@ -3037,4 +3037,18 @@ test('box health: a box that stopped, or missed its 22:00 reading, is a problem'
   assert.equal(BOXH.verdict({ ...base, heartbeatAgeS: 10, lastDaily: now - 27 * 3600e3 }, now), 'problem');
   assert.equal(BOXH.verdict({ ...base, heartbeatAgeS: 10, reading: 0 }, now), 'problem');
   assert.equal(BOXH.verdict(null, now), 'problem');
+  // A box that sends only on change has no minute count to judge.
+  assert.equal(BOXH.verdict({ ...base, heartbeatAgeS: 10, missingMinutes: null, lateMinutes: null }, now), 'good');
+});
+
+test('box health: a box that sends a row only when a reading changes is not short of minutes', () => {
+  const now = Date.UTC(2026, 9, 15, 0, 5, 30);
+  const end = Math.floor(now / 60000) * 60000 - 120000;
+  const s = BOXH.summarizeBox({
+    now,
+    meters: [{ id: 'UMPD-MCWD', lastSeen: now - 2000, rows: [{ t: end - 600000, n: 1 }, { t: end, n: 1 }] }],
+  });
+  assert.equal(s.missingMinutes, null);
+  assert.equal(s.lateMinutes, null);
+  assert.equal(BOXH.verdict(s, now), 'good');
 });

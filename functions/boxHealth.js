@@ -81,13 +81,19 @@ function summarizeBox({ meters, now }) {
       } else if (r.t >= start) {
         onTime.add(r.t);
         normal += 1;
-        if (r.n >= expected - 1) full += 1;
+        // Within a tenth: a box reading once a second lands 58 or 59 in a
+        // minute as often as 60, and that is not a short minute.
+        if (r.n >= expected * 0.9) full += 1;
       }
     }
   }
+  // A box that only sends a row when a reading changes (UMPD-MCWD: one
+  // reading per row) leaves quiet minutes empty on purpose. Counting those
+  // as missing would mark a healthy box as failing, so they are not counted.
+  const everyMinute = expected >= 3;
   let missing = 0;
   let held = 0;
-  for (const t of slots) {
+  for (const t of everyMinute ? slots : []) {
     if (onTime.has(t)) continue;
     if (late.has(t)) held += 1;
     else missing += 1;
@@ -106,8 +112,8 @@ function summarizeBox({ meters, now }) {
     perMinute: expected,
     fullPct: normal ? Math.round((full / normal) * 100) : null,
     // Of the 60 minutes: sent late as 10-minute rows, or not arrived at all.
-    lateMinutes: held,
-    missingMinutes: missing,
+    lateMinutes: everyMinute ? held : null,
+    missingMinutes: everyMinute ? missing : null,
     kwhAgeS: kwhs.length ? Math.round((now - Math.max(...kwhs)) / 1000) : null,
     lastDaily: dailies.length ? Math.max(...dailies) : null,
   };
@@ -123,7 +129,8 @@ function verdict(s, now) {
   if (!s) return 'problem';
   const dailyLate = s.lastDaily != null && now - s.lastDaily > 26 * 3600e3;
   if (s.heartbeatAgeS == null || s.heartbeatAgeS > 180 || s.reading === 0 || dailyLate) return 'problem';
-  if (s.missingMinutes + s.lateMinutes >= 5 || (s.fullPct != null && s.fullPct < 90)) return 'watch';
+  const lost = (s.missingMinutes || 0) + (s.lateMinutes || 0);
+  if (lost >= 5 || (s.fullPct != null && s.fullPct < 90)) return 'watch';
   return 'good';
 }
 
