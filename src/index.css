@@ -3524,3 +3524,95 @@ body {
 .paused-card h2 { margin: 0 0 8px; font-size: 1.15rem; }
 .paused-card p { margin: 0 0 8px; color: var(--text-dim); font-size: .9rem; line-height: 1.45; }
 .paused-card .paused-cta { margin: 14px 0 0; color: var(--text); font-weight: 650; }
+
+/* Meters that have never sent a reading, listed once under the tiles
+   (components/MallOverview.jsx) instead of a tile each. */
+.mall-waiting {
+  margin: 10px 0 4px;
+  padding: 10px 12px;
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius);
+}
+.mall-waiting-head { margin: 0; font-size: .8rem; font-weight: 620; color: var(--text-dim); display: flex; align-items: center; gap: 6px; }
+.mall-waiting-n { font-size: .7rem; font-weight: 650; padding: 0 7px; border-radius: 999px; background: var(--surface-2); color: var(--text-dim); }
+.mall-waiting-hint { margin: 2px 0 8px; font-size: .74rem; color: var(--text-faint); }
+.mall-waiting-list { display: flex; flex-wrap: wrap; gap: 6px; }
+.mall-waiting-item {
+  font: inherit; font-size: .74rem; font-weight: 560;
+  padding: 3px 10px; border-radius: 999px;
+  border: 1px solid var(--border); background: var(--surface); color: var(--text-dim);
+  cursor: pointer;
+}
+.mall-waiting-item:hover { border-color: var(--border-strong); color: var(--text); }
+
+/* ------------------------------------------------------------------
+   The mall page on a phone (components/MallOverview.jsx).
+
+   Last in the file on purpose, so it wins over the desktop rules above
+   without raising their specificity. Each block here fixes something that
+   read badly at 360-430px: the mall name squeezed beside its buttons, two
+   tall totals boxes holding one number each, and the recent-alert rows
+   split into three thin columns.
+   ------------------------------------------------------------------ */
+@media (max-width: 620px) {
+  .mall-head { flex-direction: column; align-items: stretch; gap: 10px; }
+  .mall-head h2 { font-size: 1.3rem; line-height: 1.2; overflow-wrap: anywhere; }
+  .mall-nav { width: 100%; margin-left: 0; flex-wrap: nowrap; }
+  .mall-nav .btn { flex: 1 1 0; min-height: 40px; }
+
+  /* Two counts side by side, the kWh total under them at full width. */
+  .mall-totals { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin: 12px 0 10px; }
+  .mall-stat { padding: 10px 12px; }
+  .mall-stat:last-child { grid-column: 1 / -1; }
+  .mall-stat-n { font-size: 1.45rem; }
+  .mall-stat-l { font-size: .76rem; }
+
+  /* Sort chips share the row evenly and are thumb-sized. */
+  .mall-sorts { flex-wrap: nowrap; }
+  .mall-sorts button { flex: 1 1 0; min-height: 36px; font-size: .8rem; white-space: nowrap; }
+
+  /* Each alert: who and when on one line, what happened beneath. */
+  .mall-recent { padding: 10px 12px; }
+  .mall-recent li {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    column-gap: 10px;
+    row-gap: 2px;
+    padding: 7px 0;
+    font-size: .82rem;
+  }
+  .mall-recent-who { grid-column: 1; grid-row: 1; overflow-wrap: anywhere; }
+  .mall-recent-when { grid-column: 2; grid-row: 1; font-size: .74rem; }
+  .mall-recent-what { grid-column: 1 / -1; grid-row: 2; }
+
+  /* Three tiles across, each shorter: smaller dial, tighter text, and no
+     "no alerts set" line (a set limit still shows). */
+  .mall-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
+  .tenant-tile { padding: 6px 5px 5px; }
+  .tenant-open .gauge { margin: 0 2px; }
+  .tenant-limit { min-height: 0; font-size: .6rem; gap: 4px; }
+  .lim-none { display: none; }
+  .tenant-readings { gap: 2px; margin-top: 3px; flex-wrap: nowrap; }
+  .tenant-reading { font-size: .58rem; padding: 1px 4px; white-space: nowrap; letter-spacing: -.01em; }
+  .tenant-meter { font-size: .64rem; margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .tm-full { display: none; }
+  .tenant-name { font-size: .68rem; padding: 3px 4px; margin-top: 4px; }
+  .tenant-state { font-size: .6rem; margin-top: 2px; }
+  .tenant-nodial { min-height: 52px; }
+  .tenant-nodial b { font-size: 1.1rem; }
+
+  /* History controls: each group a full-width bar whose options share it. */
+  .mall-history .panel-controls { width: 100%; }
+  .mall-history .ranges { width: 100%; }
+  .mall-history .ranges .range-btn { flex: 1 1 0; min-height: 38px; }
+}
+
+/* The header on a phone: brand on the first row, and the controls sharing
+   the second row evenly instead of trailing off to the left. */
+@media (max-width: 560px) {
+  .masthead-right { width: 100%; justify-content: flex-start; gap: 8px; }
+  .masthead-right > .switch-btn,
+  .masthead-right > .signout-btn,
+  .masthead-right > .masthead-link { flex: 1 1 0; min-height: 34px; justify-content: center; text-align: center; }
+  .masthead-right > .device { flex-basis: 100%; }
+}

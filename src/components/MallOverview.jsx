@@ -79,7 +79,12 @@ export function MallOverview({
     )
   }
 
-  const rows = rankTenants(tenants, sortKey)
+  const ranked = rankTenants(tenants, sortKey)
+  // A meter that has never sent a reading has nothing to draw: a full tile
+  // of "no reading" is a screenful of nothing on a mall with meters still
+  // switched off. They are listed once, compactly, under the tiles instead.
+  const rows = ranked.filter((t) => hasReading(t))
+  const waiting = ranked.filter((t) => !hasReading(t))
   const recent = recentAlerts(tenants)
   const needsAttention = (totals?.inAlarm || 0) + (totals?.offline || 0)
 
@@ -211,9 +216,9 @@ export function MallOverview({
         </p>
       )}
 
-      {loading && rows.length === 0 && <p className="mall-empty">Loading…</p>}
+      {loading && tenants.length === 0 && <p className="mall-empty">Loading…</p>}
 
-      {!loading && rows.length === 0 && (
+      {!loading && tenants.length === 0 && (
         <p className="mall-empty">
           No tenants are reporting into this company yet. The overview is built
           by the server every two minutes, so a newly added tenant appears on
@@ -235,6 +240,25 @@ export function MallOverview({
           />
         ))}
       </div>
+
+      {waiting.length > 0 && (
+        <div className="mall-waiting">
+          <h3 className="mall-waiting-head">
+            No reading yet <span className="mall-waiting-n">{waiting.length}</span>
+          </h3>
+          <p className="mall-waiting-hint">
+            These meters have not sent a reading. Usually switched off, or not wired to the box yet.
+          </p>
+          <div className="mall-waiting-list">
+            {waiting.map((t) => (
+              <button key={t.id} type="button" className="mall-waiting-item"
+                      onClick={() => onOpenDevice?.(t.id)} title={`Open ${t.name}`}>
+                {t.name}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Trends, tables and the export for every meter here. The memoised
           `tenants`, not the ranked `rows`: that array is rebuilt on every
@@ -388,7 +412,7 @@ function TenantTile({ tenant, nowMs, onOpen, live, chosen, picked, onPick }) {
           landlord bills on. */}
       {tenant.kwh?.deltaKwh != null && (
         <div className={`tenant-meter ${soFar ? 'tenant-today' : ''}`}>
-          <b>{tenant.kwh.deltaKwh.toFixed(1)}</b> kWh last full day
+          <b>{tenant.kwh.deltaKwh.toFixed(1)}</b> kWh last<span className="tm-full"> full</span> day
           {/* A reset makes the day's delta meaningless, so it is flagged
               rather than quietly billed. */}
           {tenant.kwh.resetSuspected && <em className="mall-warn"> meter reset</em>}
@@ -473,6 +497,11 @@ function mergeLive(tenant, latest) {
     values[k] = { ...(values[k] || {}), v: v.value }
   }
   return { ...tenant, values }
+}
+
+/** Whether a tenant has ever reported any reading at all. */
+function hasReading(t) {
+  return Object.values(t.values || {}).some((v) => v && typeof v.v === 'number')
 }
 
 /** A moment as a short local clock time - "10:00 PM". */
