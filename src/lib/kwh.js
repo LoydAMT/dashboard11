@@ -21,13 +21,16 @@ export const KWH_TAG_KEY = 'kWh'
 // `ms: null` marks "all time" - there is no cutoff to compute, the query
 // simply reads the whole node (see useKwhHistory).
 //
-// Standard gets the recent week, reading by reading; the longer windows
-// and their totals are Premium (see lib/plans.js).
+// Every plan gets every window: the package guide gives Standard the daily
+// readings and their consumption, with no limit on how far back. What is
+// Premium is the weekly and monthly TOTAL across a window (KwhHistory.jsx).
+// Every 22:00 reading is kept in the database for good, so a long window
+// needs nothing the plan withholds.
 export const KWH_RANGES = [
   { id: 'kwh-7d', label: '7 days', ms: 7 * DAY },
-  { id: 'kwh-30d', label: '30 days', ms: 30 * DAY, premium: true },
-  { id: 'kwh-90d', label: '90 days', ms: 90 * DAY, premium: true },
-  { id: 'kwh-all', label: 'All time', ms: null, premium: true },
+  { id: 'kwh-30d', label: '30 days', ms: 30 * DAY },
+  { id: 'kwh-90d', label: '90 days', ms: 90 * DAY },
+  { id: 'kwh-all', label: 'All time', ms: null },
 ]
 
 export const DEFAULT_KWH_RANGE = KWH_RANGES[0]

@@ -76,12 +76,11 @@ export const MallHistory = memo(function MallHistory({ companyId, tenants, premi
 
   // A chosen span of days for the daily kWh table and its export - the
   // billing figures - and nothing else. Held as the two days typed in, then
-  // fitted to what the plan holds (customLimits) every render, so a plan
-  // change corrects it by itself.
+  // put in order and kept off the future (clampDays) every render.
   const [custom, setCustom] = useState(null)   // { from, to } as 'YYYY-MM-DD' | null
   const dayNow = useNow(60_000)
   const today = dayString(dayNow)
-  const limits = customLimits({ premium, today })
+  const limits = DAILY_LIMITS
   const customDays = energy && view === 'table' && custom ? clampDays(custom, limits, today) : null
   const customFrom = customDays?.from
   const customTo = customDays?.to
@@ -430,19 +429,14 @@ const KwhFeed = memo(function KwhFeed({ slot, deviceId, range, onData }) {
 })
 
 /**
- * How far back a chosen span of daily readings may reach on this plan - the
- * same depth the plan's own kWh range buttons reach (lib/plans.js), so
- * picking dates never shows more than the plan includes. Every daily reading
- * is kept; Standard sees the last seven days of them.
+ * How far back a chosen span of daily readings may reach: anywhere, on every
+ * plan. Every 22:00 reading is kept, and the package guide gives them to
+ * Standard without a limit (lib/kwh.js: KWH_RANGES).
  */
-function customLimits({ premium, today }) {
-  return premium
-    ? { earliest: null, maxDays: null, hint: 'Daily meter readings for any dates.' }
-    : {
-        earliest: addDays(today, -6),
-        maxDays: 7,
-        hint: 'Standard covers the last 7 days of daily readings. Older ones are part of Premium.',
-      }
+const DAILY_LIMITS = {
+  earliest: null,
+  maxDays: null,
+  hint: 'Daily meter readings for any dates, as far back as the meter has been read.',
 }
 
 /** The two days fitted inside the limits: in order, not past today, not too early or too long. */

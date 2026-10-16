@@ -20,9 +20,10 @@ import { offered } from '../lib/plans'
  * something that panel does not show at all: consumption between readings,
  * not the bare running total. See lib/kwh.js and hooks/useKwhHistory.js.
  *
- * On Standard: the recent week only, and no total across it - the package
- * guide gives Standard daily consumption, and weekly and monthly totals to
- * Premium. Every row still carries its own consumption.
+ * Every plan gets every window of daily readings. Only the total across a
+ * window is Premium - the package guide gives Standard daily consumption,
+ * and weekly and monthly totals to Premium. Every row still carries its own
+ * consumption.
  */
 export function KwhHistory({ deviceId, tag, premium }) {
   const [rangeId, setRangeId] = useState(DEFAULT_KWH_RANGE.id)

@@ -125,7 +125,7 @@ everything on every plan.
 | Billing | `billingApi`, `billingSend` |
 | Separate tenant logins (`tenant: true` companies) | `projectCompanyAccess`, rules |
 | Per-second detail (the Raw ranges) | dashboard only |
-| kWh beyond the last 7 days, and weekly/monthly totals | dashboard only |
+| Weekly/monthly kWh totals (the daily readings themselves are on every plan, for any dates) | dashboard only |
 
 "Dashboard only" means hidden, not locked: that data lives under
 `devices/{id}/history`, which Standard must be able to read for its minute
