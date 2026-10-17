@@ -27,20 +27,28 @@ const DEVICE_BRANDS = {
     { src: '/logo/pwri/pwri.png', alt: 'Pilipinas Water Resources Inc' },
     { src: '/logo/mcwd/mcwd.png', alt: 'Metro Cebu Water District' },
   ],
-  'ayala-box1-1': AYALA_CENTRAL_BLOC,
-  'ayala-box1-2': AYALA_CENTRAL_BLOC,
-  'ayala-box1-3': AYALA_CENTRAL_BLOC,
 }
+
+// Every meter on a box, however many it reads - box 1 grew from 3 meters to
+// 23, and listing them one by one left the newer ones without the logo.
+const PREFIX_BRANDS = [
+  ['ayala-box1-', AYALA_CENTRAL_BLOC],
+  ['ayala-box2-', AYALA_CENTRAL_BLOC],
+]
 
 const COMPANY_BRANDS = {
   'ayala-box1': AYALA_CENTRAL_BLOC,
+  'amcb-4th-floor-zone-3': AYALA_CENTRAL_BLOC,
 }
 
 const NONE = []
 
 /** Logos for a device, in display order. Always an array, possibly empty. */
 export function brandsFor(deviceId) {
-  return (deviceId && DEVICE_BRANDS[deviceId]) || NONE
+  if (!deviceId) return NONE
+  if (DEVICE_BRANDS[deviceId]) return DEVICE_BRANDS[deviceId]
+  const hit = PREFIX_BRANDS.find(([prefix]) => deviceId.startsWith(prefix))
+  return hit ? hit[1] : NONE
 }
 
 /** Logos for a company's overview page. Always an array, possibly empty. */
