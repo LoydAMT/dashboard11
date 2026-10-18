@@ -6,29 +6,33 @@
    ------------------------------------------------------------------ */
 
 :root {
-  --bg: #f4f5f7;
+  /* Apple's neutrals: a light grey page with white cards on it, the grouped
+     look of iOS Settings. Text greys are Apple's own, nudged where needed so
+     every one of them clears 4.5:1 on both the page and a card. */
+  --bg: #f5f5f7;
   --surface: #ffffff;
-  --surface-2: #eceef1;
-  --border: #d8dbe0;
-  --border-strong: #b9bec7;
-  --text: #14171c;
-  --text-dim: #5b636f;
-  --text-faint: #878f9b;
+  --surface-2: #f2f2f7;
+  --border: #e3e3e8;
+  --border-strong: #c7c7cc;
+  --text: #1d1d1f;
+  --text-dim: #5f5f64;
+  --text-faint: #6e6e73;
 
-  --live: #0f7b3f;
-  --live-bg: #e4f4ea;
-  --stale: #96590a;
-  --stale-bg: #fdf1dc;
-  --down: #a8231b;
-  --down-bg: #fbe6e4;
+  --live: #1b7d36;
+  --live-bg: #e7f6ec;
+  --stale: #9a5300;
+  --stale-bg: #fff3e0;
+  --down: #c41d12;
+  --down-bg: #fdeceb;
 
-  --alarm-hi: #a8231b;
-  --alarm-hi-bg: #fbe6e4;
-  --alarm-lo: #1d4ed8;
-  --alarm-lo-bg: #e5ecfd;
+  --alarm-hi: #c41d12;
+  --alarm-hi-bg: #fdeceb;
+  --alarm-lo: #155bd0;
+  --alarm-lo-bg: #e8f0fd;
 
-  --accent: #1f6feb;
-  --grid: #e3e6ea;
+  /* Apple's link and button blue. */
+  --accent: #155bd0;
+  --grid: #ececf1;
 
   /* Categorical series slots, validated against the #ffffff panel surface:
      lightness band, chroma floor, adjacent-pair CVD separation and the
@@ -44,8 +48,13 @@
   --series-8: #e34948;
   --series-other: #6b7280;
 
-  --radius: 12px;
-  --shadow: 0 1px 2px rgba(16, 20, 28, .06), 0 4px 12px rgba(16, 20, 28, .05);
+  /* Corners: large on cards, medium on inputs and inner boxes, full pills on
+     buttons. Shadows barely there - Apple separates with space and a
+     hairline, not with depth. */
+  --radius: 18px;
+  --radius-md: 12px;
+  --radius-sm: 8px;
+  --shadow: 0 1px 2px rgba(0, 0, 0, .04), 0 2px 8px rgba(0, 0, 0, .03);
 
   /* Sampled directly from favicon-48.png (a flat blue, not a gradient - the
      accent below is one solid colour on purpose, matching what is actually
@@ -70,29 +79,30 @@
    there is no need to also keep a `prefers-color-scheme` fallback here. */
 :root[data-theme='dark'] {
   color-scheme: dark;
-  --bg: #0e1116;
-  --surface: #171b22;
-  --surface-2: #1f242d;
-  --border: #2b323d;
-  --border-strong: #3d4552;
-  --text: #e9edf3;
-  --text-dim: #9aa4b2;
-  --text-faint: #6e7885;
+  /* Apple's dark system colours: true black page, raised greys for cards. */
+  --bg: #000000;
+  --surface: #1c1c1e;
+  --surface-2: #2c2c2e;
+  --border: #38383a;
+  --border-strong: #48484a;
+  --text: #f5f5f7;
+  --text-dim: #aeaeb2;
+  --text-faint: #98989d;
 
-  --live: #4ade80;
-  --live-bg: #10291b;
-  --stale: #fbbf24;
-  --stale-bg: #2e2410;
-  --down: #f87171;
-  --down-bg: #2e1414;
+  --live: #30d158;
+  --live-bg: #0f2a17;
+  --stale: #ffb340;
+  --stale-bg: #2f2210;
+  --down: #ff6961;
+  --down-bg: #331312;
 
-  --alarm-hi: #f87171;
-  --alarm-hi-bg: #2e1414;
-  --alarm-lo: #93b4fd;
-  --alarm-lo-bg: #141d2e;
+  --alarm-hi: #ff6961;
+  --alarm-hi-bg: #331312;
+  --alarm-lo: #64a8ff;
+  --alarm-lo-bg: #10213a;
 
-  --accent: #58a6ff;
-  --grid: #262c36;
+  --accent: #2997ff;
+  --grid: #2c2c2e;
 
   /* The same eight hues re-stepped for the #171b22 surface - a selected dark
      set, not a flip of the light one. All eight clear 3:1 here. */
@@ -116,8 +126,11 @@ body {
   margin: 0;
   background: var(--bg);
   color: var(--text);
-  font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
-               "Helvetica Neue", Arial, sans-serif;
+  /* Inter, as the design system asks; the system fonts stand in while it
+     loads or if it cannot be fetched. */
+  font-family: Inter, -apple-system, BlinkMacSystemFont, "SF Pro Text",
+               "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  font-feature-settings: "cv11", "ss01";
   font-size: 15px;
   line-height: 1.45;
   -webkit-font-smoothing: antialiased;
@@ -3655,4 +3668,174 @@ body {
   .custom-range-field { flex: 1 1 0; }
   .custom-range-field input { width: 100%; min-height: 40px; font-size: 1rem; }
   .custom-range-hint { flex-basis: 100%; padding-bottom: 0; }
+}
+
+/* ==================================================================
+   Apple-style design layer
+   ------------------------------------------------------------------
+   Last in the file on purpose: it restyles what is above without
+   touching its layout, so every page keeps working the way it did and
+   only its look changes. Based on the apple-ui-skills design system
+   (.claude/skills/apple-ui-skills): Inter, Apple blue for actions and
+   focus, 1px hairlines, large rounded cards and pill-shaped controls,
+   a 4px spacing grid, no added animation. Its marketing-page sizes
+   (27px body text, 51px headings) and grey body text are deliberately
+   not used - this is a dashboard read up close, on phones as much as
+   on desktops, and text has to stay readable at 4.5:1 or better.
+   ================================================================== */
+
+/* Filled buttons need their own blue in dark mode: the bright link blue
+   is too light for white text on it. */
+:root { --accent-fill: #155bd0; --accent-fill-hover: #0f4fb8; }
+:root[data-theme='dark'] { --accent-fill: #0a6fe0; --accent-fill-hover: #1a7cec; }
+
+body { font-size: 15px; letter-spacing: normal; }
+h1, h2, h3, h4 { text-wrap: balance; }
+p, li, dd { text-wrap: pretty; }
+
+/* A disabled control looks it, everywhere. */
+button:disabled, input:disabled, select:disabled, textarea:disabled { opacity: .5; cursor: not-allowed; }
+
+/* Content clears the notch and the home bar on a phone in landscape. */
+.app {
+  padding-left: max(12px, env(safe-area-inset-left));
+  padding-right: max(12px, env(safe-area-inset-right));
+  padding-bottom: max(56px, calc(env(safe-area-inset-bottom) + 40px));
+}
+
+/* ---------- header: Safari-style frosted bar with a hairline ---------- */
+.masthead {
+  background: color-mix(in srgb, var(--bg) 78%, transparent);
+  backdrop-filter: saturate(180%) blur(20px);
+  -webkit-backdrop-filter: saturate(180%) blur(20px);
+  border-bottom: 1px solid color-mix(in srgb, var(--text) 10%, transparent);
+  padding-top: max(10px, env(safe-area-inset-top));
+  padding-bottom: 10px;
+}
+.masthead::after { display: none; }
+.masthead h1 { font-weight: 700; }
+
+/* ---------- surfaces: big soft corners, a hairline, almost no shadow ---------- */
+.card, .panel, .notice, .banner, .tenant-tile, .mall-stat, .mall-recent, .picker-mall,
+.device-picker-item, .meter-item, .perf-box, .admin-card, .naming-page .admin-card,
+.mall-entry, .alert-panel, .modal, .paused-card, .mall-waiting, .alog-filters {
+  border-radius: var(--radius);
+}
+.naming-row, .stats, .table-scroll, .toast, .tpick-pop, .vfd-line, .vfd-locked, .vfd-warning,
+.perf-why, .alarm-all, .company-devices, .tooltip, .login-msg, .bill-example, .adjust {
+  border-radius: var(--radius-md);
+}
+.panel { padding: 16px 16px 12px; }
+.card:hover { transform: none; }
+
+/* ---------- buttons: pills ---------- */
+.signout-btn, .switch-btn, .btn, .export-btn, .tpick-btn, .vfd-btn, .alert-clear {
+  border-radius: 999px;
+  min-height: 32px;
+  padding-left: 14px;
+  padding-right: 14px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  font-weight: 600;
+}
+.signout-btn, .switch-btn { background: var(--surface); border-color: var(--border-strong); color: var(--text); }
+.signout-btn:hover, .switch-btn:hover { background: var(--surface-2); }
+
+/* Filled actions in Apple blue. */
+.btn-primary, .export-primary, .naming-save:not(:disabled) {
+  background: var(--accent-fill);
+  border-color: var(--accent-fill);
+  color: #fff;
+}
+.btn-primary:hover:not(:disabled), .export-primary:hover:not(:disabled), .naming-save:hover:not(:disabled) {
+  background: var(--accent-fill-hover);
+  border-color: var(--accent-fill-hover);
+  color: #fff;
+}
+.login-submit { background: var(--accent-fill); box-shadow: none; }
+.login-submit:hover:not(:disabled) { background: var(--accent-fill-hover); filter: none; box-shadow: none; }
+
+/* ---------- segmented controls (Chart / Table, 1h / 6h / 24h ...) ---------- */
+.ranges, .seg { border-radius: 10px; padding: 2px; gap: 2px; }
+.range-btn, .seg button { border-radius: var(--radius-sm); font-weight: 500; min-height: 30px; }
+.range-active, .seg button.is-on {
+  background: var(--surface);
+  color: var(--text);
+  font-weight: 600;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, .1), 0 0 0 .5px rgba(0, 0, 0, .04);
+}
+:root[data-theme='dark'] .range-active, :root[data-theme='dark'] .seg button.is-on {
+  background: #636366;
+  box-shadow: none;
+}
+
+/* ---------- theme switch: a small pill with round thumbs ---------- */
+.theme-toggle { border-radius: 999px; padding: 2px; }
+.theme-btn { width: 30px; height: 30px; border-radius: 999px; }
+
+/* ---------- inputs ---------- */
+.naming-input, .thresholds-input, .field input, .field textarea, .contact input, .adjust input,
+.custom-range-field input, .alog-dates input, .tpick-search, .input-affix, .company-add input {
+  border-radius: 10px;
+}
+.naming-input, .tpick-search, .custom-range-field input, .alog-dates input { min-height: 36px; }
+
+/* ---------- chips and small pills ---------- */
+.chip, .mall-sorts button, .tenant-reading, .mall-waiting-item, .tg-badge, .perf-chip, .chart-zoom-reset {
+  border-radius: 999px;
+}
+.chart-zoom-btn { border-radius: 999px; }
+
+/* ---------- type ---------- */
+.mall-head h2 { font-size: 1.75rem; font-weight: 700; line-height: 1.15; }
+.subpage-head h2, .admin-intro h2 { font-weight: 700; }
+.panel-title { font-weight: 600; }
+.notice h2 { font-weight: 700; }
+.mall-stat-n, .card-number { font-variant-numeric: tabular-nums; }
+
+/* Links that act as buttons look like links, in Apple blue. */
+.mall-recent-all, .alog-link, .login-forgot { color: var(--accent); font-weight: 500; }
+
+/* Coloured left edges suited the old square corners; on these round ones a
+   thick stripe bends into a crescent. Decorative ones become an ordinary
+   hairline, an error notice gets a thin red outline all round, and the
+   chart-colour bar on a reading card sits inside the straight part of the
+   card's side. */
+.mall-entry, .picker-mall { border-left-width: 1px; border-left-color: var(--border); }
+.mall-entry:hover { border-left-color: var(--accent); }
+.notice { border-left-width: 1px; }
+.notice:not(.notice-info) { border-color: color-mix(in srgb, var(--down) 45%, var(--border)); }
+.card-stripe { top: var(--radius); bottom: var(--radius); border-radius: 0 3px 3px 0; }
+
+/* ==================================================================
+   Phones: everything a thumb touches is at least 36px tall, and the
+   main controls 40-44px, as Apple's guidelines ask. Placed last so it
+   wins over the desktop sizes above.
+   ================================================================== */
+@media (max-width: 620px) {
+  .mall-head h2 { font-size: 1.45rem; }
+
+  .signout-btn, .switch-btn, .btn, .export-btn, .tpick-btn { min-height: 40px; }
+  .masthead-right > .switch-btn, .masthead-right > .signout-btn, .masthead-right > .masthead-link { min-height: 40px; }
+  .theme-btn { width: 36px; height: 36px; }
+  .bell-btn { min-width: 40px; min-height: 40px; }
+
+  .back-link { min-height: 36px; padding-top: 6px; padding-bottom: 6px; }
+  .mall-recent-all, .alog-link { display: inline-flex; align-items: center; min-height: 36px; }
+  .range-btn, .seg button { min-height: 36px; }
+  .chip { min-height: 36px; }
+  .mall-waiting-item { min-height: 36px; }
+
+  .login-reveal { min-height: 36px; padding: 6px 8px; margin-bottom: 2px; }
+  .login-forgot { min-height: 36px; }
+
+  .naming-input, .tpick-search, .thresholds-input { min-height: 44px; font-size: 16px; }
+  .alog-tenant { min-height: 32px; display: inline-flex; align-items: center; }
+
+  /* The alert log's five time ranges share one row evenly, like the other
+     segmented controls, instead of wrapping the last one onto its own line. */
+  .alog-filters .seg { display: flex; flex-wrap: nowrap; width: 100%; }
+  .alog-filters .seg button { flex: 1 1 auto; padding-left: 4px; padding-right: 4px; white-space: nowrap; font-size: .76rem; }
 }
