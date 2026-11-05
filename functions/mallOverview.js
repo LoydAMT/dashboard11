@@ -232,4 +232,6 @@ function rollUp(rows) {
   };
 }
 
-module.exports = { tenantRow, rollUp, STALE_AFTER_MS };
+// rangeOf is exported for the box-script tests: a box that writes its own
+// tiles (boxTiles.js) must scale a dial exactly as this does.
+module.exports = { tenantRow, rollUp, rangeOf, STALE_AFTER_MS };

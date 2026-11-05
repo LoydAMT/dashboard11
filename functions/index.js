@@ -87,6 +87,7 @@ const { notifyTargetFor, shouldNotify, telegramText, sendTelegram } = require('.
 const { createPasswordReset, checkLimit: checkResetLimit } = require('./passwordReset');
 const BH = require('./boxHealth');
 const { createRecentMinutes } = require('./recentMinutes');
+const { boxOfTenant, boxIsFresh, tileTargets, tileSettled, tiledRow } = require('./boxTiles');
 
 if (getApps().length === 0) {
   initializeApp();
@@ -894,8 +895,16 @@ exports.boxAlertEvent = onValueCreated(
 // sweep: a limit edited on the dashboard must take effect as soon as it
 // always did, and the read is a few bytes per device, so caching it would
 // have saved almost nothing for a real delay in an alarm.
-const SWEEP_TTL = { tags: 5 * 60000, naming: 10 * 60000 };
+//   boxTenants  a box flashed with tiles (boxTiles.js) is noticed within this
+//           long; until then its tenants are read the full way, as before.
+const SWEEP_TTL = { tags: 5 * 60000, naming: 10 * 60000, boxTenants: 10 * 60000 };
 const sweepCache = new Map();
+// The tileTargets/ node as last written, so it is written only when a
+// tenant joins or leaves a mall page. Empty after a cold start, which costs
+// one write.
+let tileTargetsSent = null;
+// tenant -> when this instance first saw it in tileTargets (see TILE_SETTLE_MS).
+const tiledSince = new Map();
 // The recent minutes behind each self-judging box's dial ranges, so a run
 // reads only the new ones (recentMinutes.js).
 const recentMinutes = createRecentMinutes();
@@ -948,8 +957,87 @@ exports.alertSweep = onSchedule(
     // own.
     const rows = {};
 
+    // Boxes that write their own tiles (boxTiles.js). Every box's heartbeat
+    // in one small read; the list of their meters from memory. Either one
+    // failing only means every tenant is read the full way, as before.
+    let boxSeen = {};
+    let tileBox = {};
+    try {
+      const [seenSnap, boxTenants] = await Promise.all([
+        rtdb.ref('boxSeen').once('value'),
+        cachedRead(sweepCache, 'boxTenants', SWEEP_TTL.boxTenants, now,
+          async () => (await rtdb.ref('boxTenants').once('value')).val() || {}),
+      ]);
+      boxSeen = seenSnap.val() || {};
+      tileBox = boxOfTenant(boxTenants);
+      // Where each box is to write its tiles. A box reads its own entry
+      // about every ten minutes.
+      const targets = tileTargets({ boxTenants, deviceCompanies, overviewIds });
+      const json = JSON.stringify(targets);
+      if (json !== tileTargetsSent) {
+        await rtdb.ref('tileTargets').set(targets);
+        tileTargetsSent = json;
+      }
+      const listed = new Set();
+      for (const per of Object.values(targets)) for (const dev of Object.keys(per)) listed.add(dev);
+      for (const dev of listed) if (!tiledSince.has(dev)) tiledSince.set(dev, now);
+      for (const dev of [...tiledSince.keys()]) if (!listed.has(dev)) tiledSince.delete(dev);
+    } catch (err) {
+      console.error('alertSweep: box tiles unreadable, reading every tenant in full', err);
+      boxSeen = {};
+      tileBox = {};
+    }
+
     await inParallel(sweepDevices, SWEEP_CONCURRENCY, async (device) => {
       try {
+        // This tenant's box writes its tile's values itself and has been heard
+        // from in the last BOX_FRESH_MS. Nothing of the tenant's is read: the
+        // box is plainly reporting, so the only verdict left is "back online"
+        // after an outage, and the colour comes with the heartbeat. A box gone
+        // quiet fails this test and its tenants take the full path below,
+        // which is what decides "stopped reporting". A tenant newly on a mall
+        // page is also read the full way until its box has had time to learn
+        // where its tile goes (TILE_SETTLE_MS); one on no mall page needs no
+        // tile at all.
+        const box = tileBox[device];
+        const tileReady = !tiledSince.has(device) || tileSettled(tiledSince.get(device), now);
+        if (box && boxIsFresh(boxSeen[box], now) && tileReady) {
+          const [nameVal, stored] = await Promise.all([
+            cachedRead(sweepCache, `naming:${device}`, SWEEP_TTL.naming, now,
+              async () => (await rtdb.ref(`naming/${device}`).once('value')).val()),
+            readAlertState(fs, device),
+          ]);
+          const prevState = stored || {};
+          const { events, state } = evaluateAlerts({
+            device, windows: [], rules: {}, prevState,
+            status: { lastSeen: boxSeen[box].ts }, now, thresholds: false,
+          });
+          if (events.length > 0) {
+            const owning = deviceCompanies[device] || [];
+            const batch = fs.batch();
+            for (const ev of events) {
+              batch.set(fs.collection('devices').doc(device).collection('alerts').doc(alertId(ev)), {
+                ...ev, companies: owning, recordedAt: FieldValue.serverTimestamp(),
+              });
+            }
+            await batch.commit();
+            console.log(`alertSweep: ${device} -> ${events.length} event(s): ` +
+              events.map((e) => e.kind).join(', '));
+          }
+          if (stored === null || Boolean(prevState.offline) !== Boolean(state.offline)) {
+            alertStateCache.delete(device);
+            await fs.collection('alertState').doc(device).set(state, { merge: true });
+          }
+          rows[device] = tiledRow({ deviceId: device, name: nameVal, seen: boxSeen[box] });
+          if (events.length > 0) {
+            const last = events[events.length - 1];
+            rows[device].lastAlert = {
+              ts: last.ts, kind: last.kind, level: last.level || 'info', message: last.message,
+            };
+          }
+          return;
+        }
+
         // A device on the instant path (see LIVE_ALERT_DEVICES) has its
         // thresholds evaluated by its trigger the moment a reading lands.
         // This sweep then keeps only what it is still the right tool for -
@@ -1244,6 +1332,9 @@ exports.alertSweep = onSchedule(
           // every tile, re-sent to every open wall - to say nothing the tile
           // shows. Null removes it as soon as the tenant is back.
           updates[`${base}/lastSeen`] = row.online ? null : row.lastSeen;
+          if (row.lastAlert) updates[`${base}/lastAlert`] = row.lastAlert;
+          // The box writes this tenant's values and kWh itself (boxTiles.js).
+          if (row.tiled) continue;
           // Explicit null, not {}: RTDB stores no empty objects, so this
           // says "clear the readings" unambiguously. It matters - a tenant
           // whose latest/ became unreadable must stop showing the numbers
@@ -1253,11 +1344,10 @@ exports.alertSweep = onSchedule(
           // The meter's latest reading, for "used so far" on the tile. Null
           // clears it for a device with no meter, same reasoning as above.
           updates[`${base}/kwhLive`] = row.kwhLive || null;
-          // Written only when this run produced one. Not writing leaves the
-          // previous alert in place, which is what "most recent" means -
-          // clearing it every quiet sweep would mean the feed only ever
-          // showed the last two minutes.
-          if (row.lastAlert) updates[`${base}/lastAlert`] = row.lastAlert;
+          // (lastAlert, above, is written only when this run produced one.
+          // Not writing leaves the previous alert in place, which is what
+          // "most recent" means - clearing it every quiet sweep would mean
+          // the feed only ever showed the last two minutes.)
         }
         const totals = rollUp(mine);
         // The company's real size, NOT the number evaluated this run. A

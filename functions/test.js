@@ -3095,3 +3095,55 @@ test('recent minutes: a box that went quiet longer than the window is read in fu
   rm.absorb('m1', 'Current', {}, since);
   assert.equal(rm.windows('m1', ['Current'], since).length, 0, 'old minutes forgotten');
 });
+
+// ---------------------------------------------------------------------------
+//  Boxes that write their own mall-page tiles (boxTiles.js)
+// ---------------------------------------------------------------------------
+const BT = require('./boxTiles');
+
+test('box tiles: each tenant belongs to the box that lists it', () => {
+  const owner = BT.boxOfTenant({ b1: { 'b1-1': true, 'b1-2': true }, b2: { 'b2-1': true, junk: 'yes' } });
+  assert.deepEqual(owner, { 'b1-1': 'b1', 'b1-2': 'b1', 'b2-1': 'b2' });
+  assert.deepEqual(BT.boxOfTenant(null), {});
+});
+
+test('box tiles: a box is trusted only while its heartbeat is recent', () => {
+  const now = 1_800_000_000_000;
+  assert.equal(BT.boxIsFresh({ ts: now - 20000 }, now), true);
+  assert.equal(BT.boxIsFresh({ ts: now - BT.BOX_FRESH_MS - 1 }, now), false, 'quiet box: full path again');
+  assert.equal(BT.boxIsFresh({ ts: now + 10 * 60000 }, now), false, 'a box clock far ahead is not trusted');
+  assert.equal(BT.boxIsFresh(undefined, now), false);
+  assert.equal(BT.boxIsFresh({ ts: 'x' }, now), false);
+  assert.ok(BT.BOX_FRESH_MS < 5 * 60000, 'well inside the offline threshold');
+});
+
+test('box tiles: targets list only mall pages, per box, per tenant', () => {
+  const t = BT.tileTargets({
+    boxTenants: { b1: { 'b1-1': true, 'b1-2': true, 'b1-3': true } },
+    deviceCompanies: { 'b1-1': ['mall', 'shop1'], 'b1-2': ['shop2'], 'b1-3': ['mall', 'mall2'] },
+    overviewIds: new Set(['mall', 'mall2']),
+  });
+  assert.deepEqual(t, { b1: { 'b1-1': { mall: true }, 'b1-3': { mall: true, mall2: true } } });
+  assert.deepEqual(BT.tileTargets({ boxTenants: { b1: { x: true } } }), {}, 'no mall page, no entry');
+});
+
+test('box tiles: the row carries the box colour and leaves values to the box', () => {
+  const r = BT.tiledRow({ deviceId: 'b1-1', name: 'Shop', seen: { ts: 1, alarm: { 'b1-1': 'high' } } });
+  assert.deepEqual(r, { device: 'b1-1', name: 'Shop', alarm: 'high', online: true, lastSeen: null, tiled: true });
+  assert.equal(BT.tiledRow({ deviceId: 'b1-2', seen: { ts: 1 } }).alarm, 'ok');
+  assert.equal(BT.tiledRow({ deviceId: 'b1-2', seen: { ts: 1 } }).name, 'b1-2');
+  assert.equal(BT.boxAlarmOf({ alarm: { a: 'weird' } }, 'a'), 'ok');
+  // It rolls up like any other row.
+  const { rollUp } = require('./mallOverview');
+  const totals = rollUp({ a: r, b: BT.tiledRow({ deviceId: 'b', seen: { ts: 1 } }) });
+  assert.equal(totals.inAlarm, 1);
+  assert.equal(totals.offline, 0);
+});
+
+test('box tiles: a tenant new to a mall page waits until its box can know', () => {
+  const now = 1_800_000_000_000;
+  assert.equal(BT.tileSettled(now - 60000, now), false, 'one minute in: the box may not have read its targets yet');
+  assert.equal(BT.tileSettled(now - BT.TILE_SETTLE_MS, now), true);
+  assert.equal(BT.tileSettled(undefined, now), false);
+  assert.ok(BT.TILE_SETTLE_MS > 10 * 60000, 'longer than the box re-reads its targets');
+});
