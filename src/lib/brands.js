@@ -34,11 +34,15 @@ const DEVICE_BRANDS = {
 const PREFIX_BRANDS = [
   ['ayala-box1-', AYALA_CENTRAL_BLOC],
   ['ayala-box2-', AYALA_CENTRAL_BLOC],
+  ['ayala-box3-', AYALA_CENTRAL_BLOC],
+  ['ayala-box4-', AYALA_CENTRAL_BLOC],
 ]
 
 const COMPANY_BRANDS = {
   'ayala-box1': AYALA_CENTRAL_BLOC,
   'amcb-4th-floor-zone-3': AYALA_CENTRAL_BLOC,
+  'amcb-ee-room-ground-floor': AYALA_CENTRAL_BLOC,
+  'amcb-ee-room-ground-floor-2': AYALA_CENTRAL_BLOC,
 }
 
 const NONE = []
