@@ -36,6 +36,7 @@ const PREFIX_BRANDS = [
   ['ayala-box2-', AYALA_CENTRAL_BLOC],
   ['ayala-box3-', AYALA_CENTRAL_BLOC],
   ['ayala-box4-', AYALA_CENTRAL_BLOC],
+  ['ayala-box5-', AYALA_CENTRAL_BLOC],
 ]
 
 const COMPANY_BRANDS = {
